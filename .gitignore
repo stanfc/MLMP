@@ -102,3 +102,7 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
+.data/
+.qualitative/
+.save/
+*_log*.txt

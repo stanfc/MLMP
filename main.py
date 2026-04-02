@@ -292,6 +292,11 @@ def main(args):
         num_org_classes = len(org_classes)
         ignore_index = data_loader.dataset.ignore_index # the index of the ignore label in the segmentation map
 
+        # Release previous model before loading the next one to avoid OOM
+        if c_idx > 0:
+            del adapt_method
+            torch.cuda.empty_cache()
+
         # Setting up the model and the method
         adapt_method = get_method(args, device)
 
