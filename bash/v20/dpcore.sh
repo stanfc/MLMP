@@ -6,22 +6,26 @@ GPU_ID=3
 DATASET=PascalVOC20Dataset
 DATA_DIR=".data/VOC2012/"
 INIT_RESIZE="224 224"
-ALL_CORRUPTIONS="original gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
 WORKERS=4
 
 # Method and OVSS Model Configuration
-METHOD="mlmp"
-OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
+METHOD="dpcore"
+OUT_VISION="-1"
 PROMPT_DIR="prompts.yaml"
-ALPHA_CLS=1.0
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# Hyperparameters
-BATCH_SIZE=64
-LR=0.001
-STEPS=10
-TRIALS=3
+# DPCore Hyperparameters
+BATCH_SIZE=128
+LR=5e-4
+STEPS=50
+TRIALS=1
+TEMP_TAU=3.0
+EMA_ALPHA=0.999
+THR_RHO=0.9
+PROMPT_NUM=8
+VERBOSE=false
 
 # Output
 SAVE_DIR=".save/${DATASET}/${METHOD}/"
@@ -29,10 +33,10 @@ SAVE_DIR=".save/${DATASET}/${METHOD}/"
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --adapt \
+                        --continual \
                         --method $METHOD \
                         --prompt_dir $PROMPT_DIR \
                         --vision_outputs $OUT_VISION \
-                        --alpha_cls $ALPHA_CLS \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
                         \
@@ -51,6 +55,10 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --trials $TRIALS \
                         --seed 0 \
                         \
-                        --plot_loss \
+                        --temp_tau $TEMP_TAU \
+                        --ema_alpha $EMA_ALPHA \
+                        --thr_rho $THR_RHO \
+                        --prompt_num $PROMPT_NUM \
+                        $( [ "$VERBOSE" = "true" ] && echo "--verbose_dpcore" ) \
+                        \
                         --class_extensions
-

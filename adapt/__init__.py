@@ -6,6 +6,8 @@ from .clipartt import CLIPARTT
 from .watt import WATT
 from .tpt import TPT
 from .tent import TENT
+from .cotta import CoTTA
+from .dpcore import DPCore
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -14,6 +16,8 @@ METHOD_CLASSES = {
     'watt': WATT,
     'tpt': TPT,
     'tent': TENT,
+    'cotta': CoTTA,
+    'dpcore': DPCore,
 }
 
 

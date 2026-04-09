@@ -3,10 +3,10 @@
 GPU_ID=3
 
 # Dataset Configuration
-DATASET=PascalVOC20Dataset
-DATA_DIR=".data/VOC2012/"
+DATASET=PascalContext60Dataset
+DATA_DIR=".data/VOC2010/"
 INIT_RESIZE="224 224"
-ALL_CORRUPTIONS="original gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
 WORKERS=4
 
 # Method and OVSS Model Configuration
@@ -18,17 +18,18 @@ OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
 # Hyperparameters
-BATCH_SIZE=64
+BATCH_SIZE=2
 LR=0.001
 STEPS=10
-TRIALS=3
+TRIALS=1
 
 # Output
-SAVE_DIR=".save/${DATASET}/${METHOD}/"
+SAVE_DIR=".save/${DATASET}/${METHOD}_continual/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --adapt \
+                        --continual \
                         --method $METHOD \
                         --prompt_dir $PROMPT_DIR \
                         --vision_outputs $OUT_VISION \
@@ -51,6 +52,4 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --trials $TRIALS \
                         --seed 0 \
                         \
-                        --plot_loss \
                         --class_extensions
-

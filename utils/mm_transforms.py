@@ -1,5 +1,6 @@
 
-import numpy as np  
+import os
+import numpy as np
 
 import torch
 
@@ -18,16 +19,24 @@ from utils.imagecorruptions import get_corruption_names
 
 @TRANSFORMS.register_module()
 class CorruptTransform(BaseTransform):
-    def __init__(self, corruption_name: str, corruption_severity: int = 5):
+    def __init__(self, corruption_name: str, corruption_severity: int = 5,
+                 cache_dir: str = None):
         super().__init__()
         self.corruption_name = corruption_name
         self.corruption_severity = corruption_severity
+        self.cache_dir = cache_dir  # e.g. ".cache/corruptions"
 
         if self.corruption_name not in get_corruption_names():
             raise ValueError(f"Corruption name {self.corruption_name} is not valid. \nchoose from {get_corruption_names()}")
 
+    def _cache_path(self, img_path: str) -> str:
+        import hashlib
+        img_hash = hashlib.md5(img_path.encode()).hexdigest()
+        fname = f"{img_hash}_{self.corruption_name}_s{self.corruption_severity}.npy"
+        return os.path.join(self.cache_dir, fname)
+
     def transform(self, results: dict) -> dict:
-        """ 
+        """
         Args:
             results (dict): The input data dictionary.
         Returns:
@@ -37,22 +46,33 @@ class CorruptTransform(BaseTransform):
         """
 
         img = results['img']
-        img_index = results['sample_idx']  
+        img_index = results['sample_idx']
 
+        # Try loading from cache
+        if self.cache_dir is not None:
+            cache_path = self._cache_path(results.get('img_path', str(img_index)))
+            if os.path.exists(cache_path):
+                results['img'] = np.load(cache_path)
+                return results
 
         # Save the current RNG state
         rng_state = np.random.get_state()
-        
+
         # Set the seed based on the index to ensure reproducibility
         np.random.seed(img_index)
 
-
         # Corrupt the image
-        results['img'] = corrupt(img, severity=self.corruption_severity, corruption_name=self.corruption_name)
-        
+        corrupted = corrupt(img, severity=self.corruption_severity, corruption_name=self.corruption_name)
+
         # Restore the original RNG state
         np.random.set_state(rng_state)
-        
+
+        # Save to cache
+        if self.cache_dir is not None:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            np.save(cache_path, corrupted)
+
+        results['img'] = corrupted
         return results
     
 

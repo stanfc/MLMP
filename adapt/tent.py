@@ -144,6 +144,43 @@ class TENT:
         self.load_model_and_optimizer(self.model, self.optimizer,
                                       self.model_state, self.optimizer_state)
 
+    def continual_adapt(self, x):
+        """
+        One gradient step without resetting model state.
+        evaluate() is called before continual_adapt() to get pre-update predictions.
+
+        Args:
+            x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
+        """
+        logits, _, _ = self.model(x, self.text_x, True, interpolate=False)
+        loss = self.softmax_entropy(logits).mean()
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+    def continual_adapt_and_evaluate(self, x):
+        """
+        Online TTA following the DPCore/original TENT protocol:
+          - inference is done first with the current model (pre-update)
+          - 1 gradient step on the current batch (no reset, state carries over)
+          - returns interpolated logits from before the update
+
+        Args:
+            x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
+
+        Returns:
+            torch.Tensor: Per-class logits of shape (batch_size, num_classes, H, W).
+        """
+        # 1 gradient step (no reset — model state accumulates across batches/corruptions)
+        logits_eval, _, _ = self.model(x, self.text_x, True, interpolate=True)
+        
+        loss = self.softmax_entropy(logits_eval).mean()
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+        return logits_eval[0]  # (batch_size, num_classes, H, W)
+
     def perform_adaptation(self, x):
         """
         Forward pass with adaptation for test-time. The model adapts itself during testing by updating on every forward pass.

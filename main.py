@@ -193,6 +193,11 @@ def argparser():
         action='store_true',
         help='Enable debug mode'
     )
+    parser.add_argument(
+        '--continual',
+        action='store_true',
+        help='Run continual TTA: corruptions are streamed sequentially without model reset between batches or corruptions'
+    )
 
     return parser
 
@@ -233,6 +238,79 @@ def add_method_specific_args(parser, method):
             help='Number of repetitions of the adaptation and weight averaging process'
             )
 
+    elif method == 'cotta':
+        parser.add_argument(
+            '--vision_outputs',
+            nargs='+', type=int, default=(-1,),
+            help='Indices of vision layers to extract outputs from'
+        )
+        parser.add_argument(
+            '--prompt_integration',
+            type=str, default='loss',
+            help='Multi-prompt integration mode: loss or text'
+        )
+        parser.add_argument(
+            '--alpha_cls',
+            type=float, default=1.0,
+            help='Weight for CLS-token entropy loss term'
+        )
+        parser.add_argument(
+            '--mt', type=float, default=0.999,
+            help='EMA momentum for teacher update'
+        )
+        parser.add_argument(
+            '--rst', type=float, default=0.01,
+            help='Stochastic restore probability per parameter element'
+        )
+        parser.add_argument(
+            '--ap', type=float, default=0.92,
+            help='Anchor-probability threshold below which augmentation averaging is used'
+        )
+        parser.add_argument(
+            '--aug_n', type=int, default=32,
+            help='Number of augmented views for augmentation-averaged teacher prediction'
+        )
+        parser.add_argument(
+            '--finetune_mode', type=str, default='ln',
+            choices=['ln', 'full'],
+            help="Visual encoder update scope: 'ln' for LayerNorm only, 'full' for all params"
+        )
+        parser.add_argument(
+            '--episodic', action='store_true',
+            help='Reset model to anchor state before each batch (episodic TTA)'
+        )
+
+    elif method == 'dpcore':
+        parser.add_argument(
+            '--vision_outputs',
+            nargs='+', type=int, default=(-1,),
+            help='Indices of vision layers to extract outputs from'
+        )
+        parser.add_argument(
+            '--episodic', action='store_true',
+            help='Reset coreset and model before each batch (episodic TTA)'
+        )
+        parser.add_argument(
+            '--temp_tau', type=float, default=3.0,
+            help='Temperature for coreset weight softmax'
+        )
+        parser.add_argument(
+            '--ema_alpha', type=float, default=0.999,
+            help='EMA momentum for coreset statistics update'
+        )
+        parser.add_argument(
+            '--thr_rho', type=float, default=0.8,
+            help='Loss threshold ratio for ID/OOD decision'
+        )
+        parser.add_argument(
+            '--prompt_num', type=int, default=1,
+            help='Number of visual prompt tokens'
+        )
+        parser.add_argument(
+            '--verbose_dpcore', action='store_true',
+            help='Print per-step loss and coreset eval info for DPCore'
+        )
+
     elif method == 'clipartt':
         parser.add_argument(
             '--clipartt_k', 
@@ -249,6 +327,172 @@ def add_method_specific_args(parser, method):
             )
     
     return parser
+
+
+def main_continual(args):
+    """
+    Continual TTA variant of main().
+    Corruptions are streamed sequentially as a single data flow.
+    The model is never reset between batches or corruptions.
+    mIoU is computed and saved at the end of each corruption's data.
+    For multiple trials, the full corruption sequence is re-run from scratch per trial.
+    """
+
+    save_configuration(args)
+    start_time = time.time()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    all_results_path = os.path.join(args.save_dir, "results.txt")
+    os.makedirs(os.path.dirname(all_results_path), exist_ok=True)
+
+    all_results = dict()
+    headers = "mIoU, mDice, mAcc"
+
+    # Outer trial loop: each trial re-runs the full corruption sequence from a fresh model
+    trial_corruption_miou = {c: [] for c in args.corruptions_list}
+    trial_corruption_dice = {c: [] for c in args.corruptions_list}
+    trial_corruption_acc  = {c: [] for c in args.corruptions_list}
+
+    # Load classes once from the first corruption to set args.classes before model init
+    # (must respect class_extensions since MLMP uses them for text embeddings)
+    _first_loader, org_classes = segmentation_datasets.prepare_data(
+        args.dataset, args.data_dir, args.init_resize,
+        args.patch_size, args.patch_stride, corruption=args.corruptions_list[0],
+        batch_size=args.batch_size, num_workers=args.workers)
+    if args.class_extensions and _first_loader.dataset.class_extensions is not None:
+        args.classes = _first_loader.dataset.class_extensions
+    else:
+        args.classes = org_classes
+    del _first_loader
+
+    for t in range(args.trials):
+        print(f"\n=== Continual TTA Trial {t} ===")
+
+        # Initialise a fresh model once per trial
+        adapt_method = get_method(args, device)
+
+        # DPCore requires source statistics before adaptation
+        if args.method == 'dpcore':
+            src_loader, _ = segmentation_datasets.prepare_data(
+                args.dataset, args.data_dir, args.init_resize,
+                args.patch_size, args.patch_stride, corruption='original',
+                batch_size=args.batch_size, num_workers=args.workers)
+            adapt_method.obtain_src_stat(src_loader)
+
+        for c_idx, corruption in enumerate(args.corruptions_list):
+            data_loader, org_classes = segmentation_datasets.prepare_data(
+                args.dataset, args.data_dir, args.init_resize,
+                args.patch_size, args.patch_stride, corruption=corruption,
+                batch_size=args.batch_size, num_workers=args.workers)
+
+            if args.class_extensions and data_loader.dataset.class_extensions is not None:
+                ext_classes = data_loader.dataset.class_extensions
+                args.classes = ext_classes
+            else:
+                args.classes = org_classes
+
+            num_org_classes = len(org_classes)
+            ignore_index = data_loader.dataset.ignore_index
+
+            results = []
+            pbar = tqdm(enumerate(data_loader), total=len(data_loader),
+                        desc=f"[trial {t}] {corruption}")
+            for batch_idx, data in pbar:
+
+                if args.debug and batch_idx == 10:
+                    break
+
+                inputs = data['img_patches']
+                labels = data['gt_patches']
+                original_gts = data['gt']
+                patch_grid_shape = data['meta']['patch_grid_shape']
+                image_shapes = data['meta']['img_shape']
+                inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+
+                # No reset — model state carries over from previous batch/corruption
+                # evaluate first (pre-update), then adapt — following DPCore protocol
+                with torch.no_grad():
+                    patch_preds = adapt_method.evaluate(inputs)
+                if args.adapt:
+                    adapt_method.continual_adapt(inputs)
+                    if hasattr(adapt_method, 'coreset'):
+                        pbar.set_postfix(coreset=len(adapt_method.coreset))
+
+                if args.init_resize:
+                    reconstructed_preds = aggregate_pred_patches(
+                        patch_preds, patch_grid_shape, image_shapes,
+                        args.patch_size, args.patch_stride)
+                else:
+                    reconstructed_preds = patch_preds
+
+                for idx, (pd, gt) in enumerate(zip(reconstructed_preds, original_gts)):
+                    pd = pd.softmax(dim=0)
+
+                    if args.class_extensions and data_loader.dataset.class_extensions is not None:
+                        ext_to_real_cls_indx = torch.Tensor(
+                            data_loader.dataset.extentions_to_real_class_idx
+                        ).to(torch.int64).to(device)
+                        num_cls = max(ext_to_real_cls_indx) + 1
+                        num_queries = len(ext_to_real_cls_indx)
+                        ext_to_real_cls_indx = torch.nn.functional.one_hot(ext_to_real_cls_indx)
+                        ext_to_real_cls_indx = ext_to_real_cls_indx.T.view(num_cls, num_queries, 1, 1)
+                        pd = pd.unsqueeze(0)
+                        pd = (pd * ext_to_real_cls_indx).max(1)[0]
+
+                    pd = pd.argmax(dim=0).to(gt.device)
+                    gt = gt[0]
+                    results.append(intersect_and_union(pd, gt, num_org_classes, ignore_index))
+
+            metrics = process_metrics(results, org_classes)
+            trial_corruption_miou[corruption].append(metrics['mIoU'])
+            trial_corruption_dice[corruption].append(metrics['mDice'])
+            trial_corruption_acc[corruption].append(metrics['mAcc'])
+            print(f"[trial {t}] {corruption}: mIoU={metrics['mIoU']:.2f}, "
+                  f"mDice={metrics['mDice']:.2f}, mAcc={metrics['mAcc']:.2f}")
+
+        del adapt_method
+        torch.cuda.empty_cache()
+
+    # Aggregate across trials and save results
+    corruption_means = []
+    with open(all_results_path, 'w') as f_all:
+        f_all.write(headers + "\n")
+
+        for c_idx, corruption in enumerate(args.corruptions_list):
+            miou_mean = np.mean(trial_corruption_miou[corruption])
+            miou_std  = np.std(trial_corruption_miou[corruption])
+            dice_mean = np.mean(trial_corruption_dice[corruption])
+            dice_std  = np.std(trial_corruption_dice[corruption])
+            acc_mean  = np.mean(trial_corruption_acc[corruption])
+            acc_std   = np.std(trial_corruption_acc[corruption])
+
+            c_results_print = (f"{miou_mean:.2f} +/- {miou_std:.2f}, "
+                               f"{dice_mean:.2f} +/- {dice_std:.2f}, "
+                               f"{acc_mean:.2f} +/- {acc_std:.2f}")
+            all_results[corruption] = c_results_print
+
+            c_results_path = os.path.join(args.save_dir, f"{c_idx:02}_{corruption}", "results.txt")
+            os.makedirs(os.path.dirname(c_results_path), exist_ok=True)
+            with open(c_results_path, 'w') as f:
+                f.write(headers + "\n")
+                f.write(c_results_print)
+
+            f_all.write(f"{corruption}, {c_results_print}\n")
+
+            # Exclude 'original' from the continual mean (matches standard benchmark tables)
+            if corruption != 'original':
+                corruption_means.append(miou_mean)
+
+        # Overall mean across corruptions (excluding 'original')
+        if corruption_means:
+            overall_mean = np.mean(corruption_means)
+            f_all.write(f"\nMean (corruptions only), {overall_mean:.2f}\n")
+            print(f"\nContinual TTA Mean mIoU (corruptions only): {overall_mean:.2f}")
+
+        total_duration = time.time() - start_time
+        gpu_info = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+        f_all.write(f"\nGPU: {gpu_info}\n")
+        f_all.write(f"Total Duration (s): {total_duration:.2f}\n")
 
 
 def main(args):
@@ -299,6 +543,14 @@ def main(args):
 
         # Setting up the model and the method
         adapt_method = get_method(args, device)
+
+        # DPCore requires source statistics before adaptation
+        if args.method == 'dpcore':
+            src_loader, _ = segmentation_datasets.prepare_data(
+                args.dataset, args.data_dir, args.init_resize,
+                args.patch_size, args.patch_stride, corruption='original',
+                batch_size=args.batch_size, num_workers=args.workers)
+            adapt_method.obtain_src_stat(src_loader)
 
         # Results path
         c_results_path = os.path.join(args.save_dir, f"{c_idx:02}_{corruption}", "results.txt")
@@ -496,4 +748,7 @@ if __name__ == "__main__":
     set_global_seeds(args.seed)
 
     # Run the main function with the parsed arguments
-    main(args)
+    if args.continual:
+        main_continual(args)
+    else:
+        main(args)
