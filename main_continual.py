@@ -138,26 +138,19 @@ def add_method_specific_args(parser, method):
     elif method == 'tpt':
         parser.add_argument('--n_ctx', default=4, type=int)
 
-    # --- CoTTA (OVSS adaptation) ---
+    # --- CoTTA on NA-CLIP (OVSS) ---
+    # Uses constructor defaults for mt/rst/ap/aug_n unless overridden here.
     elif method == 'cotta':
-        parser.add_argument('--ema_alpha', type=float, default=0.999,
-                            help='EMA smoothing factor for teacher update')
-        parser.add_argument('--restoration_p', type=float, default=0.01,
-                            help='Stochastic restoration probability per weight')
-        parser.add_argument('--conf_threshold', type=float, default=0.1,
-                            help='Source confidence threshold for augmentation gating')
-        parser.add_argument('--n_augmentations', type=int, default=8,
-                            help='Number of augmented teacher views when conf < threshold')
-
-    # --- MLMP-CoTTA ---
-    elif method == 'mlmp_cotta':
+        parser.add_argument('--mt', type=float, default=0.999,
+                            help='EMA smoothing factor for teacher (CoTTA mt)')
+        parser.add_argument('--rst', type=float, default=0.01,
+                            help='Stochastic restoration probability (CoTTA rst)')
+        parser.add_argument('--ap', type=float, default=0.92,
+                            help='Anchor confidence threshold for augmentation gating (CoTTA ap)')
+        parser.add_argument('--aug_n', type=int, default=32,
+                            help='Number of augmented teacher views (CoTTA aug_n)')
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
-        parser.add_argument('--prompt_integration', type=str, default='loss')
-        parser.add_argument('--alpha_cls', type=float, default=1.0)
-        parser.add_argument('--ema_alpha', type=float, default=0.999)
-        parser.add_argument('--restoration_p', type=float, default=0.01)
-        parser.add_argument('--conf_threshold', type=float, default=0.1)
-        parser.add_argument('--n_augmentations', type=int, default=8)
+        parser.add_argument('--prompt_integration', type=str, default='text')
 
     # --- MLMP-Continual (naive continual: MLMP without reset) ---
     elif method == 'mlmp_continual':
@@ -291,11 +284,12 @@ def main(args):
                 inputs = inputs.to(device, non_blocking=True)
 
                 # *** CTTA: NO reset() — model state accumulates ***
-                if args.adapt:
-                    adapt_method.adapt(inputs)
-
+                # Evaluate BEFORE adapt (pre-update prediction), matching main.py protocol
                 with torch.no_grad():
                     patch_preds = adapt_method.evaluate(inputs)
+
+                if args.adapt:
+                    adapt_method.continual_adapt(inputs)
 
                 # Reconstruct full-resolution segmentation maps
                 if args.init_resize:

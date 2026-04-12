@@ -1,8 +1,11 @@
 #!/bin/bash
-# CoTTA on ACDC (10-round CTTA).
-# Implements teacher-student EMA + augmentation-averaged pseudo-labels +
-# stochastic restoration, applied to OVSS (NA-CLIP backbone).
-# This is the main CoTTA baseline — compare with mlmp_cotta.sh.
+# CoTTA on ACDC (10-round CTTA) with NA-CLIP backbone.
+# Open-vocabulary segmentation: class names are text prompts, no closed-set head.
+#
+# CoTTA three mechanisms:
+#   1. EMA teacher (mt=0.999) for stable pseudo-labels
+#   2. Augmentation-averaged pseudo-labels when anchor confidence < ap
+#   3. Stochastic restoration (rst=0.01) to prevent catastrophic forgetting
 
 # GPU Configuration
 GPU_ID=0
@@ -19,22 +22,25 @@ METHOD="cotta"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
+# CoTTA hyperparameters (matching original CoTTA paper values)
+MT=0.999        # EMA smoothing factor for teacher
+RST=0.01        # stochastic restoration probability
+AP=0.92         # anchor confidence threshold (augment when mean conf < AP)
+AUG_N=32        # number of augmented teacher views
+
+# Use last layer only (standard CoTTA spirit — no multi-level fusion)
+OUT_VISION="-1"
+
 # Hyperparameters
 BATCH_SIZE=1
-LR=0.0001      # lower than episodic TTA — updates accumulate over 10 rounds
+LR=0.00001     # lower LR for continual — updates accumulate over 10 rounds
 STEPS=1        # online: 1 step per sample
-
-# CoTTA-specific hyperparameters
-EMA_ALPHA=0.999         # teacher EMA smoothing factor
-RESTORATION_P=0.01      # fraction of LN weights stochastically restored to source
-CONF_THRESHOLD=0.1      # source confidence below which augmentation is applied
-N_AUGMENTATIONS=8       # number of augmented teacher views for pseudo-label
 
 # Experiment
 CONTINUAL_ROUNDS=10
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_batch_${BATCH_SIZE}/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
@@ -42,6 +48,12 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
+                        \
+                        --vision_outputs $OUT_VISION \
+                        --mt $MT \
+                        --rst $RST \
+                        --ap $AP \
+                        --aug_n $AUG_N \
                         \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \
@@ -56,11 +68,6 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
-                        \
-                        --ema_alpha $EMA_ALPHA \
-                        --restoration_p $RESTORATION_P \
-                        --conf_threshold $CONF_THRESHOLD \
-                        --n_augmentations $N_AUGMENTATIONS \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

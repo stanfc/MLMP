@@ -9,8 +9,13 @@ from .tent import TENT
 from .cotta import CoTTA
 from .dpcore import DPCore
 
+# Continual TTA (no reset, state persists across stream)
+from .mlmp_continual import MLMPContinual
+from .tent_continual import TENTContinual
+
 # Map methods to their classes
 METHOD_CLASSES = {
+    # Episodic TTA
     'mlmp': MLMP,
     'clipartt': CLIPARTT,
     'watt': WATT,
@@ -18,6 +23,9 @@ METHOD_CLASSES = {
     'tent': TENT,
     'cotta': CoTTA,
     'dpcore': DPCore,
+    # Continual TTA (naive: no reset)
+    'mlmp_continual': MLMPContinual,
+    'tent_continual': TENTContinual,
 }
 
 

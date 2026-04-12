@@ -125,6 +125,10 @@ class MLMPContinual:
         """
         return self.perform_adaptation(x)
 
+    def continual_adapt(self, x):
+        """Alias for adapt() — compatible with main_continual.py protocol."""
+        return self.perform_adaptation(x)
+
     @torch.no_grad()
     def evaluate(self, x):
         """
