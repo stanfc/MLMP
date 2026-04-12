@@ -120,6 +120,70 @@ class MLMP:
         loss_report = self.perform_adaptation(x)
         return loss_report
 
+    def continual_adapt(self, x):
+        """
+        Forward pass with adaptation without resetting model state.
+        Used for continual TTA where model state carries over across batches and corruptions.
+
+        Args:
+            x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
+
+        Returns:
+            List[float]: Loss values recorded at each adaptation iteration.
+        """
+        loss_report = self.perform_adaptation(x)
+        return loss_report
+
+    def continual_adapt_and_evaluate(self, x):
+        """
+        Continual TTA following the original TENT protocol:
+          - N gradient steps on the current batch (no reset, state carries over)
+          - inference uses the last step's forward pass directly (no extra forward)
+
+        Args:
+            x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
+
+        Returns:
+            torch.Tensor: Per-class logits of shape (batch_size, num_classes, H, W).
+        """
+        t1 = time.time()
+        for iter in range(self.steps):
+            if self.prompt_integration == 'loss':
+                logits, _, _, cls_logits = self.model(x, self.text_x[:-1], True,
+                                                      interpolate=False,
+                                                      vision_outputs=self.vision_outputs,
+                                                      return_vanilla_cls=True,
+                                                      vision_out_type="mean")
+                entropy_per_pixel = self.softmax_entropy(logits)
+                entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)
+                loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
+
+            elif self.prompt_integration == 'text':
+                logits, _, _ = self.model(x, self.text_x[-1], True,
+                                          interpolate=False,
+                                          vision_outputs=self.vision_outputs)
+                loss = self.softmax_entropy(logits).mean()
+
+            else:
+                raise Exception("prompt_integration should be either on 'loss' or 'text'")
+
+            loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+        t2 = time.time()
+        if self.runtime:
+            self.adapt_times.append(t2 - t1)
+
+        # inference with the just-updated weights, identical to evaluate()
+        with torch.no_grad():
+            logits, _, _ = self.model(x, self.text_x[-1], True,
+                                      vision_outputs=self.vision_outputs,
+                                      interpolate=True,
+                                      vision_out_type="adaptive_weighted_mean",
+                                      save_weights=True)
+        return logits[0]  # (batch_size, num_classes, H, W)
+
 
     @torch.no_grad() 
     def evaluate(self, x):
