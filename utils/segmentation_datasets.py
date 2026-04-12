@@ -48,6 +48,36 @@ class CityscapesDataset(BaseSegDataset):
 
 
 @DATASETS.register_module()
+class ACDCDataset(BaseSegDataset):
+    """ACDC dataset (Adverse Conditions Dataset with Correspondences).
+
+    Real-world adverse condition images: fog, night, rain, snow.
+    Same 19 semantic classes and label convention as Cityscapes.
+    img_suffix  = '_rgb_anon.png'
+    seg_suffix  = '_gt_labelTrainIds.png'
+    """
+    METAINFO = dict(
+        classes=('road', 'sidewalk', 'building', 'wall', 'fence', 'pole',
+                 'traffic light', 'traffic sign', 'vegetation', 'terrain',
+                 'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train',
+                 'motorcycle', 'bicycle'),
+        palette=[[128, 64, 128], [244, 35, 232], [70, 70, 70], [102, 102, 156],
+                 [190, 153, 153], [153, 153, 153], [250, 170, 30], [220, 220, 0],
+                 [107, 142, 35], [152, 251, 152], [70, 130, 180],
+                 [220, 20, 60], [255, 0, 0], [0, 0, 142], [0, 0, 70],
+                 [0, 60, 100], [0, 80, 100], [0, 0, 230], [119, 11, 32]])
+
+    class_extensions, extentions_to_real_class_idx = get_cls_idx("utils/class_extensions/cityscapes.txt")
+
+    def __init__(self,
+                 img_suffix='_rgb_anon.png',
+                 seg_map_suffix='_gt_labelTrainIds.png',
+                 **kwargs) -> None:
+        super().__init__(
+            img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
+
+@DATASETS.register_module()
 class COCOStuffDataset(BaseSegDataset):
     """COCO-Stuff dataset.
 
@@ -403,6 +433,18 @@ mm_cityscapes_cfg =  {
                 ]
     }
 
+# ACDC: data_prefix is filled in dynamically by prepare_data() using corruption name
+mm_acdc_cfg_base = {
+    'type': 'ACDCDataset',
+    'data_root': data_dir,
+    'data_prefix': {'img_path': '', 'seg_map_path': ''},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+
 mm_pascalvoc20_cfg = {
     'type': 'PascalVOC20Dataset',
     'data_root': data_dir,
@@ -480,6 +522,11 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
         mm_config = copy.deepcopy(mm_cocoobject_cfg)
     elif dataset == "CityscapesDataset":
         mm_config = copy.deepcopy(mm_cityscapes_cfg)
+    elif dataset == "ACDCDataset":
+        mm_config = copy.deepcopy(mm_acdc_cfg_base)
+        # ACDC condition is encoded in the data path, not as a synthetic transform
+        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/val'
+        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/val'
     elif dataset == "PascalVOC20Dataset":
         mm_config = copy.deepcopy(mm_pascalvoc20_cfg)
     elif dataset == "PascalVOC21Dataset":
@@ -501,7 +548,9 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
 
     ### add corruption to the pipline
     # Find the index of 'LoadImageFromFile' in the pipeline
-    if corruption == "original":
+    # ACDC: condition is encoded in the data path already — no synthetic transform needed
+    _acdc_conditions = {'fog', 'night', 'rain', 'snow'}
+    if dataset == "ACDCDataset" or corruption == "original":
         print("No corruption added to the pipeline")
     else:
         load_image_index = next(

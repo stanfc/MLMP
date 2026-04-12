@@ -5,7 +5,7 @@
 # (reproduces the "TENT-continual" row of CoTTA Table 5).
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=3
 
 # Dataset Configuration
 DATASET=ACDCDataset

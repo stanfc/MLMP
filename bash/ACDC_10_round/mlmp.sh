@@ -1,12 +1,8 @@
 #!/bin/bash
-# MLMP-Continual on ACDC (10-round CTTA).
-# Naive continual version of MLMP: identical adaptation signal (multi-prompt
-# entropy + ILE) but model state is NEVER reset between samples.
-#
-# Expected behaviour: performance may degrade across rounds due to error
-# accumulation and catastrophic forgetting — no anti-forgetting mechanism.
-# Use this as an ablation baseline against mlmp_cotta.sh to isolate the
-# contribution of CoTTA's EMA teacher + stochastic restoration.
+# MLMP (episodic) on ACDC.
+# Standard episodic TTA: reset → adapt → evaluate for every sample.
+# Model state does NOT carry over between samples.
+# Use this as the episodic upper-bound baseline compared to continual methods.
 
 # GPU Configuration
 GPU_ID=3
@@ -19,7 +15,7 @@ CONDITIONS="fog night rain snow"
 WORKERS=4
 
 # Method Configuration
-METHOD="mlmp_continual"
+METHOD="mlmp"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
@@ -30,17 +26,15 @@ ALPHA_CLS=1.0
 
 # Hyperparameters
 BATCH_SIZE=1
-LR=0.0001      # lower than episodic TTA — updates accumulate over 10 rounds
-STEPS=1        # online: 1 step per sample
-
-# Experiment
-CONTINUAL_ROUNDS=10
+LR=0.001
+STEPS=10
+TRIALS=1
 
 # Output
 SAVE_DIR="save/${DATASET}/${METHOD}_batch_${BATCH_SIZE}/"
 
-# Run
-CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+# Run (episodic: uses main.py, not main_continual.py)
+CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
@@ -60,8 +54,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         \
                         --lr $LR \
                         --steps $STEPS \
-                        --batch_size $BATCH_SIZE \
-                        --continual_rounds $CONTINUAL_ROUNDS \
+                        --batch-size $BATCH_SIZE \
+                        --trials $TRIALS \
                         --seed 0 \
                         \
                         --save_dir $SAVE_DIR \

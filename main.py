@@ -65,6 +65,7 @@ def argparser():
         default='COCOStuffDataset',
         choices=(
             'COCOStuffDataset', 'COCOObjectDataset', 'CityscapesDataset',
+            'ACDCDataset',
             'PascalVOC20Dataset', 'PascalVOC21Dataset',
             'PascalContext59Dataset', 'PascalContext60Dataset'
         ),

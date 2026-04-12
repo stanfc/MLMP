@@ -5,7 +5,7 @@
 # Use this to establish the zero-shot source model performance.
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=3
 
 # Dataset Configuration
 DATASET=ACDCDataset
@@ -17,6 +17,7 @@ WORKERS=4
 # Model Configuration
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
+METHOD="tent_continual"   # lightest method; --adapt is omitted so no updates occur
 
 # Experiment
 CONTINUAL_ROUNDS=10
@@ -27,6 +28,7 @@ SAVE_DIR="save/${DATASET}/No_Adaptation/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+                        --method $METHOD \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \
                         --init_resize $INIT_RESIZE \

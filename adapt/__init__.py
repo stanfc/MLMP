@@ -34,40 +34,36 @@ METHOD_CLASSES = {
 def get_method(args, device):
     if args.method not in METHOD_CLASSES:
         raise ValueError(f"Unknown method: {args.method}")
-    
-    # Retrieve the class and its arguments
+
     method_class = METHOD_CLASSES[args.method]
-    class_args = get_class_args(method_class)
-    
-    # Filter relevant args and add additional variables
+    sig = inspect.signature(method_class.__init__)
     args_dict = vars(args)
-    method_args = {key: args_dict[key] for key in class_args if key in args_dict}
-    method_args['device'] = device  # Add device explicitly if needed
 
-    # Check for missing arguments
-    missing_args = [key for key in class_args if key not in method_args]
-    if missing_args:
-        raise ValueError(f"Missing arguments for {method_class.__name__}: {missing_args}")
-    
-    # Summarize arguments for better printing
-    # summarized_args = summarize_args(method_args)
+    method_args = {}
+    missing_required = []
 
-    # Log selected method and parameters in pretty form
-    # print("\nMethod +++++++++++++++++++++++++++++++++++++")
-    #
-    # print(f"Selected Method: {method_class.__name__}")
-    # print("Method Parameters:")
-    # pprint(summarized_args)
-    # print("----------------------------------------")
+    for name, param in sig.parameters.items():
+        if name == 'self':
+            continue
+        if name == 'device':
+            method_args['device'] = device
+        elif name in args_dict:
+            # arg present in argparse → use it
+            method_args[name] = args_dict[name]
+        elif param.default is not inspect.Parameter.empty:
+            # arg not in argparse but has a constructor default → skip (Python uses default)
+            pass
+        else:
+            # truly required arg with no default and not in argparse
+            missing_required.append(name)
 
-    # Instantiate the class with relevant arguments
+    if missing_required:
+        raise ValueError(
+            f"Missing required arguments for {method_class.__name__}: {missing_required}. "
+            f"Add them to argparse."
+        )
+
     return method_class(**method_args)
-
-
-# Function to get class arguments dynamically
-def get_class_args(cls):
-    signature = inspect.signature(cls.__init__)
-    return [param.name for param in signature.parameters.values() if param.name != 'self']
 
 # Function to summarize the 'classes' argument
 def summarize_args(method_args):
