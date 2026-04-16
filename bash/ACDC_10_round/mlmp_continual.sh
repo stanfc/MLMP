@@ -30,14 +30,14 @@ ALPHA_CLS=1.0
 
 # Hyperparameters
 BATCH_SIZE=1
-LR=0.0001      # lower than episodic TTA — updates accumulate over 10 rounds
-STEPS=1        # online: 1 step per sample
+LR=0.00001      # lower than episodic TTA — updates accumulate over 10 rounds
+STEPS=10        # online: 1 step per sample
 
 # Experiment
 CONTINUAL_ROUNDS=10
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}_batch_${BATCH_SIZE}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

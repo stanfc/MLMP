@@ -92,15 +92,24 @@ class DPCore(nn.Module):
 
     @torch.no_grad()
     def evaluate(self, x):
-        """Inference with current student model."""
-        logits, _, _ = self.model(
-            x, self.text_x[-1], text_ensemble=True,
-            vision_outputs=self.vision_outputs,
-            interpolate=True,
-            vision_out_type="adaptive_weighted_mean",
-            save_weights=True,
-        )
-        return logits[0]  # (batch, num_classes, H, W)
+        """Inference with current student model.
+
+        Processes one image at a time to avoid INT_MAX overflow in bilinear
+        interpolation when batch_size is large (B × N_patches × C × H × W can
+        exceed 2^31 elements when batch_size >= ~63 for ACDC 36-patch images).
+        """
+        all_logits = []
+        for b in range(x.shape[0]):
+            img = x[b:b+1]  # (1, N_patches, C, H, W)
+            logits, _, _ = self.model(
+                img, self.text_x[-1], text_ensemble=True,
+                vision_outputs=self.vision_outputs,
+                interpolate=True,
+                vision_out_type="adaptive_weighted_mean",
+                save_weights=(b == 0),
+            )
+            all_logits.append(logits[0])  # (N_patches, C, H, W)
+        return torch.cat(all_logits, dim=0)  # (B*N_patches, C, H, W)
 
     def reset(self):
         load_model_and_optimizer(self.model, self.optimizer,
@@ -203,6 +212,11 @@ class DPCore(nn.Module):
                 ent = softmax_entropy(logits[0])
                 num_classes = logits[0].shape[1]
                 selected_indices = torch.where(ent.mean(dim=(-2, -1)) < math.log(num_classes) / 2 - 1)[0]
+                # Fallback: if entropy filter excludes all samples (common for adverse-condition
+                # source proxies like ACDC fog where predictions are uncertain without adaptation),
+                # use the full batch. The filter is designed for clean source domains only.
+                if len(selected_indices) == 0:
+                    selected_indices = torch.arange(feature.shape[0], device=feature.device)
                 feature = feature[selected_indices]
 
                 features.append(feature[:, 0])
@@ -262,8 +276,10 @@ def forward_and_get_loss(images, model, lamda, train_info, with_prompt=False):
 
     """discrepancy loss"""
     batch_std, batch_mean = torch.std_mean(cls_features, dim=0)
-    std_loss = torch.norm(batch_std - train_info[0].to(cls_features.device), p=2)
-    mean_loss = torch.norm(batch_mean - train_info[1].to(cls_features.device), p=2)
+    # Use squared L2 (MSE) instead of L2 norm to avoid nan gradient when loss → 0.
+    # torch.norm(v, p=2) = sqrt(sum(v²)), gradient = v/||v|| → 0/0 when ||v|| → 0.
+    std_loss  = ((batch_std  - train_info[0].to(cls_features.device)) ** 2).mean()
+    mean_loss = ((batch_mean - train_info[1].to(cls_features.device)) ** 2).mean()
 
     loss = lamda * std_loss + mean_loss
 
@@ -304,11 +320,13 @@ def forward_and_adapt(x, model, optimizer, lamda, train_info, text_x, vision_out
     cls_features = features[:, 0]
     batch_std, batch_mean = torch.std_mean(cls_features, dim=0)
 
-    std_loss = torch.norm(batch_std - train_info[0].to(cls_features.device), p=2)
-    mean_loss = torch.norm(batch_mean - train_info[1].to(cls_features.device), p=2)
+    # Squared L2 (MSE) to avoid nan gradient when ||diff|| → 0
+    std_loss  = ((batch_std  - train_info[0].to(cls_features.device)) ** 2).mean()
+    mean_loss = ((batch_mean - train_info[1].to(cls_features.device)) ** 2).mean()
     loss = lamda * std_loss + mean_loss
 
     loss.backward()
+    torch.nn.utils.clip_grad_norm_([model.visual.prompts], max_norm=1.0)
     optimizer.step()
     optimizer.zero_grad()
 

@@ -22,14 +22,14 @@ OVSS_BACKBONE="ViT-L/14"
 # Hyperparameters
 # Lower LR than episodic TTA — continual updates accumulate over 10 rounds
 BATCH_SIZE=1
-LR=0.0001
-STEPS=1
+LR=0.00001
+STEPS=10
 
 # Experiment
 CONTINUAL_ROUNDS=10
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

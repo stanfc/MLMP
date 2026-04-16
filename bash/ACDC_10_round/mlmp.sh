@@ -27,11 +27,11 @@ ALPHA_CLS=1.0
 # Hyperparameters
 BATCH_SIZE=1
 LR=0.001
-STEPS=10
+STEPS=1
 TRIALS=1
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}_batch_${BATCH_SIZE}/"
+SAVE_DIR="save/${DATASET}/mlmp_episodic_step_${STEPS}/"
 
 # Run (episodic: uses main.py, not main_continual.py)
 CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \

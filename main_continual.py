@@ -106,6 +106,22 @@ def argparser():
     )
 
     # ----------------------------------------
+    # DPCore source statistics
+    # ----------------------------------------
+    parser.add_argument(
+        '--src_dataset', type=str, default=None,
+        help=(
+            'Dataset for DPCore source statistics. Defaults to --dataset. '
+            'For ACDCDataset, set to CityscapesDataset to use clean images as source '
+            '(fog-as-source causes loss_raw≈0, making ID detection impossible).'
+        )
+    )
+    parser.add_argument(
+        '--src_data_dir', type=str, default=None,
+        help='Data root for src_dataset. Defaults to --data_dir.'
+    )
+
+    # ----------------------------------------
     # Misc
     # ----------------------------------------
     parser.add_argument('--seed', type=int, default=0)
@@ -161,6 +177,20 @@ def add_method_specific_args(parser, method):
     # --- TENT-Continual ---
     elif method == 'tent_continual':
         pass   # no extra args beyond base parser
+
+    # --- DPCore (Dynamic Prompt Coreset) ---
+    elif method == 'dpcore':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--temp_tau', type=float, default=3.0,
+                            help='Temperature for coreset weight softmax')
+        parser.add_argument('--ema_alpha', type=float, default=0.999,
+                            help='EMA momentum for coreset statistics update')
+        parser.add_argument('--thr_rho', type=float, default=0.9,
+                            help='Loss threshold ratio for ID/OOD decision')
+        parser.add_argument('--prompt_num', type=int, default=8,
+                            help='Number of visual prompt tokens')
+        parser.add_argument('--verbose_dpcore', action='store_true',
+                            help='Print per-step loss and coreset eval info')
 
     return parser
 
@@ -235,6 +265,26 @@ def main(args):
     # ----------------------------------------------------------------
     adapt_method = get_method(args, device)
 
+    # DPCore requires source statistics before adaptation.
+    # Using fog-as-source causes loss_raw≈0 when testing on fog, making the ID
+    # condition (loss_new < loss_raw * thr_rho) impossible → every batch is OOD.
+    # Solution: use a clean source domain (CityscapesDataset) for ACDC experiments.
+    if args.method == 'dpcore':
+        src_dataset  = args.src_dataset  or args.dataset
+        src_data_dir = args.src_data_dir or args.data_dir
+        src_corruption = 'original'
+
+        print(f"\n[DPCore] Computing source statistics from '{src_dataset}' ({src_data_dir}) ...")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False
+        )
+        adapt_method.obtain_src_stat(src_loader)
+        del src_loader
+
     all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}
     headers = "mIoU, mDice, mAcc"
 
@@ -268,11 +318,12 @@ def main(args):
 
             results = []
 
-            for batch_idx, data in tqdm(
+            pbar = tqdm(
                 enumerate(data_loader),
                 total=len(data_loader),
                 desc=f"  Rd {round_num:02d} | {condition:5s}"
-            ):
+            )
+            for batch_idx, data in pbar:
                 if args.debug and batch_idx >= 5:
                     break
 
@@ -290,6 +341,10 @@ def main(args):
 
                 if args.adapt:
                     adapt_method.continual_adapt(inputs)
+
+                # Show coreset size for DPCore
+                if hasattr(adapt_method, 'coreset'):
+                    pbar.set_postfix(coreset=len(adapt_method.coreset))
 
                 # Reconstruct full-resolution segmentation maps
                 if args.init_resize:

@@ -8,6 +8,7 @@ Usage:  python parse_acdc_results.py
 
 import os
 import re
+import math
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -21,8 +22,8 @@ TOTAL_ROUNDS = 10          # continual experiments always run 10 rounds
 # (display_name, save_dir, is_episodic)
 METHODS = [
     ("No Adaptation",   "No_Adaptation",         False),
-    ("TENT-continual",  "tent_continual",         False),
-    ("MLMP-continual",  "mlmp_continual_batch_1", False),
+    ("TENT-continual",  "tent_continual_lr_0.00001",         False),
+    ("MLMP-continual",  "mlmp_continual_batch_1_LR_0.00001", False),
     ("CoTTA",           "cotta_batch_1",          False),
     ("MLMP (episodic)", "mlmp_batch_1",           True),
 ]
@@ -237,3 +238,115 @@ with open(out_path, "w") as f:
 print(f"\nLaTeX table saved → {out_path}")
 print("\n" + "=" * 72)
 print(latex)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Delta table  (round-over-round Δ mIoU)
+# Round 1 → 0 baseline; Round N → data[N] − data[prev shown round]
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Build delta_data: {name: {round: {cond: delta}}}
+delta_data = {}
+for name in data:
+    delta_data[name] = {}
+    prev = None
+    for r in ROUNDS_SHOW:
+        if r not in data[name]:
+            continue
+        if prev is None:
+            delta_data[name][r] = {c: 0.0 for c in CONDITIONS}
+        else:
+            delta_data[name][r] = {
+                c: data[name][r].get(c, float("nan")) - data[name][prev].get(c, float("nan"))
+                for c in CONDITIONS
+            }
+        prev = r
+
+
+def fmt_delta(val):
+    """Color-coded delta: green for gain, red for loss, gray for zero."""
+    if math.isnan(val):
+        return "--"
+    if abs(val) < 0.05:
+        return r"\textcolor{gray}{0.0}"
+    s = f"{val:+.1f}"
+    if val > 0:
+        return r"\textcolor{ForestGreen}{" + s + "}"
+    else:
+        return r"\textcolor{red}{" + s + "}"
+
+
+def delta_row_mean(name):
+    """Mean of all non-zero deltas (rounds 4/7/10 × all conditions)."""
+    vals = [
+        delta_data[name][r][c]
+        for r in ROUNDS_SHOW[1:]          # skip round 1 (all zeros)
+        for c in CONDITIONS
+        if r in delta_data.get(name, {}) and c in delta_data[name][r]
+        and not math.isnan(delta_data[name][r][c])
+    ]
+    return sum(vals) / len(vals) if vals else float("nan")
+
+
+delta_lines = []
+delta_lines.append(r"% Requires: \usepackage[dvipsnames]{xcolor}")
+delta_lines.append(r"\begin{table}[t]")
+delta_lines.append(r"\centering")
+delta_lines.append(r"\footnotesize")
+delta_lines.append(
+    r"\caption{Continual TTA on ACDC --- round-over-round $\Delta$mIoU~(\%). "
+    r"Round~1 is the baseline (0); each subsequent column shows the change "
+    r"from the previous shown round. "
+    r"\textcolor{ForestGreen}{Green}~= improvement, \textcolor{red}{red}~= degradation.}"
+)
+delta_lines.append(r"\label{tab:acdc_continual_delta}")
+delta_lines.append(r"\resizebox{\textwidth}{!}{")
+delta_lines.append(r"\begin{tabular}{" + col_spec + "}")
+delta_lines.append(r"\toprule")
+
+# Row 1: time arrow (reuse same string as main table)
+delta_lines.append(
+    r"Time & \multicolumn{" + str(n_data) + r"}{c}{$t$"
+    r" \hspace{0.5em}\leaders\hbox{$\relbar$}\hfill\rightarrow}"
+    r" & & \\"
+)
+
+# Row 2: round numbers
+delta_lines.append(r"Round & " + round_cells + r" & Mean $\Delta$ & Time/Round \\")
+delta_lines.append(r"\hline")
+
+# Row 3: condition names
+delta_lines.append(r"Method & " + cond_cells + r" & & \\")
+delta_lines.append(r"\hline")
+
+# Data rows
+for name, _, _ in METHODS:
+    if name not in delta_data:
+        continue
+    row = [name]
+    for r in ROUNDS_SHOW:
+        for c in CONDITIONS:
+            if r in delta_data[name] and c in delta_data[name][r]:
+                row.append(fmt_delta(delta_data[name][r][c]))
+            else:
+                row.append("--")
+    # Mean Δ (average of rounds 4/7/10 deltas across conditions)
+    dm = delta_row_mean(name)
+    row.append(fmt_delta(dm) if not math.isnan(dm) else "--")
+    # Time/Round (same as main table)
+    row.append(fmt_time(durations.get(name), best_time == name))
+    delta_lines.append(" & ".join(row) + r" \\")
+
+delta_lines.append(r"\bottomrule")
+delta_lines.append(r"\end{tabular}")
+delta_lines.append(r"}")   # resizebox
+delta_lines.append(r"\end{table}")
+
+delta_latex = "\n".join(delta_lines)
+
+delta_out = os.path.join(SAVE_ROOT, "acdc_table_delta.tex")
+with open(delta_out, "w") as f:
+    f.write(delta_latex + "\n")
+
+print(f"\nDelta LaTeX table saved → {delta_out}")
+print("\n" + "=" * 72)
+print(delta_latex)
