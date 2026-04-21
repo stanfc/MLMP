@@ -18,9 +18,10 @@ OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
 # Hyperparameters
-BATCH_SIZE=2
-LR=0.001
-STEPS=10
+BATCH_SIZE=128
+MICRO_BATCH_SIZE=4
+LR=2e-6
+STEPS=1
 TRIALS=1
 
 # Output
@@ -49,6 +50,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
                         --lr $LR \
                         --steps $STEPS \
                         --batch-size $BATCH_SIZE \
+                        --micro_batch_size $MICRO_BATCH_SIZE \
                         --trials $TRIALS \
                         --seed 0 \
                         \

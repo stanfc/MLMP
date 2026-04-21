@@ -23,9 +23,11 @@ class TENT:
     Inspired by TENT GitHub: https://github.com/DequanWang/tent
     """
 
-    def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=10, 
+    def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=10,
                  prompt_dir=None, runtime_calculation=False,
-                 device='cpu', 
+                 micro_batch_size=None,
+                 catseg_checkpoint=None,
+                 device='cpu',
                  ):
         """
         Initialize the TENT adaptation module.
@@ -53,10 +55,16 @@ class TENT:
         self.prompt_dir = prompt_dir
         self.steps = steps
         self.runtime = runtime_calculation
+        self.micro_batch_size = micro_batch_size
+        self.catseg_checkpoint = catseg_checkpoint
         self.device = device
+        self.is_catseg = (ovss_type == 'catseg')
 
         # Load the OVSS model and tokenizer
-        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device)
+        self.model, self.tokenize = load_ovss(
+            self.ovss_type, self.ovss_backbone, device=self.device,
+            classes=self.classes, catseg_checkpoint=self.catseg_checkpoint,
+        )
 
         if self.prompt_dir:
             # Load the prompt templates
@@ -74,7 +82,19 @@ class TENT:
         self.model.visual = self.set_ln_grads(self.model.visual)
 
         # Collect the LayerNorm parameters
-        params, _ = self.collect_ln_params(self.model.visual)
+        params, param_names = self.collect_ln_params(self.model.visual)
+
+        if self.is_catseg:
+            self.model.aggregator = self.set_ln_grads(self.model.aggregator)
+            self.model.sem_seg_head = self.set_ln_grads(self.model.sem_seg_head)
+            agg_params, _ = self.collect_ln_params(self.model.aggregator)
+            head_params, _ = self.collect_ln_params(self.model.sem_seg_head)
+            existing_ids = {id(p) for p in params}
+            for p in agg_params + head_params:
+                if id(p) not in existing_ids:
+                    params.append(p)
+                    existing_ids.add(id(p))
+            print(f"+++ CAT-Seg TENT: total LN params for TTA: {len(params)}")
 
         # print the parameters
         print_clip_parameters(self.model)
@@ -89,8 +109,11 @@ class TENT:
         self.model_state, self.optimizer_state = self.copy_model_and_optimizer(self.model, self.optimizer)
 
         # extracting text features
-        with torch.no_grad():
-            self.text_x = self.extract_text_embeddings(self.classes, self.prompt_templates, average=False).squeeze() # (class, 512)
+        if not self.is_catseg:
+            with torch.no_grad():
+                self.text_x = self.extract_text_embeddings(self.classes, self.prompt_templates, average=False).squeeze()
+        else:
+            self.text_x = None
 
         # define variables to store adaptation and evaluation duration
         if self.runtime:
@@ -112,7 +135,7 @@ class TENT:
         loss_report = self.perform_adaptation(x)
         return loss_report
 
-    @torch.no_grad() 
+    @torch.no_grad()
     def evaluate(self, x):
         """
         Forward pass without adaptation.
@@ -126,9 +149,30 @@ class TENT:
         """
 
         t1 = time.time()
-        logits, _, _ = self.model(x, self.text_x, True, 
-                                  interpolate=True) # (#template, batch_size, #classes, H, W)
-        logits = logits[0]
+        mbs = self.micro_batch_size
+
+        if self.is_catseg:
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, interpolate=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(x, interpolate=True)
+                logits = logits[0]
+        else:
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, self.text_x, True, interpolate=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(x, self.text_x, True,
+                                          interpolate=True)
+                logits = logits[0]
+
         t2 = time.time()
         if self.runtime:
             self.eval_times.append(t2-t1)
@@ -148,13 +192,26 @@ class TENT:
         """
         One gradient step without resetting model state.
         evaluate() is called before continual_adapt() to get pre-update predictions.
+        Supports gradient accumulation when micro_batch_size is set.
 
         Args:
             x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
         """
-        logits, _, _ = self.model(x, self.text_x, True, interpolate=False)
-        loss = self.softmax_entropy(logits).mean()
-        loss.backward()
+        mbs = self.micro_batch_size
+        if mbs is not None and mbs < x.shape[0]:
+            chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+        else:
+            chunks = [x]
+        n_chunks = len(chunks)
+
+        for chunk in chunks:
+            if self.is_catseg:
+                logits, _, _ = self.model(chunk, interpolate=False)
+            else:
+                logits, _, _ = self.model(chunk, self.text_x, True, interpolate=False)
+            loss = self.softmax_entropy(logits).mean()
+            (loss / n_chunks).backward()
+
         self.optimizer.step()
         self.optimizer.zero_grad()
 
@@ -164,6 +221,7 @@ class TENT:
           - inference is done first with the current model (pre-update)
           - 1 gradient step on the current batch (no reset, state carries over)
           - returns interpolated logits from before the update
+        Supports gradient accumulation when micro_batch_size is set.
 
         Args:
             x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
@@ -171,39 +229,63 @@ class TENT:
         Returns:
             torch.Tensor: Per-class logits of shape (batch_size, num_classes, H, W).
         """
-        # 1 gradient step (no reset — model state accumulates across batches/corruptions)
-        logits_eval, _, _ = self.model(x, self.text_x, True, interpolate=True)
-        
-        loss = self.softmax_entropy(logits_eval).mean()
-        loss.backward()
+        mbs = self.micro_batch_size
+        if mbs is not None and mbs < x.shape[0]:
+            chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+        else:
+            chunks = [x]
+        n_chunks = len(chunks)
+
+        all_logits = []
+        for chunk in chunks:
+            if self.is_catseg:
+                logits_eval, _, _ = self.model(chunk, interpolate=True)
+            else:
+                logits_eval, _, _ = self.model(chunk, self.text_x, True, interpolate=True)
+            loss = self.softmax_entropy(logits_eval).mean()
+            (loss / n_chunks).backward()
+            all_logits.append(logits_eval[0].detach())
+
         self.optimizer.step()
         self.optimizer.zero_grad()
 
-        return logits_eval[0]  # (batch_size, num_classes, H, W)
+        return torch.cat(all_logits, dim=0)
 
     def perform_adaptation(self, x):
         """
         Forward pass with adaptation for test-time. The model adapts itself during testing by updating on every forward pass.
+        Supports gradient accumulation when micro_batch_size is set.
 
         Args:
             x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
-        
+
         Returns:
             List[float]: Recorded loss values for each adaptation iteration.
         """
 
         t1 = time.time()
         loss_report = []
+        mbs = self.micro_batch_size
+        if mbs is not None and mbs < x.shape[0]:
+            chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+        else:
+            chunks = [x]
+        n_chunks = len(chunks)
+
         for iter in range(self.steps):
-            logits, _, _ = self.model(x, self.text_x, True, 
-                                      interpolate=False)  # (#template, batch_size, #classes, H, W)
-            
-            # adapt
-            entropy_per_pixel = self.softmax_entropy(logits)  # Shape: (#template, batch_size, H, W)
-            # Average over all prompts, pixels and batch samples
-            loss = entropy_per_pixel.mean()
-            loss_report.append(loss.item())
-            loss.backward()
+            total_loss = 0.0
+            for chunk in chunks:
+                if self.is_catseg:
+                    logits, _, _ = self.model(chunk, interpolate=False)
+                else:
+                    logits, _, _ = self.model(chunk, self.text_x, True,
+                                              interpolate=False)
+                entropy_per_pixel = self.softmax_entropy(logits)
+                loss = entropy_per_pixel.mean()
+                (loss / n_chunks).backward()
+                total_loss += loss.item() / n_chunks
+
+            loss_report.append(total_loss)
             self.optimizer.step()
             self.optimizer.zero_grad()
 

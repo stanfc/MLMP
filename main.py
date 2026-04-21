@@ -128,6 +128,12 @@ def argparser():
         action='store_true',
         help='Enable dataset-specific class extensions if available'
     )
+    parser.add_argument(
+        '--catseg_checkpoint',
+        type=str,
+        default=None,
+        help='Path to a CAT-Seg pretrained checkpoint (required when ovss_type=catseg)'
+    )
     
     # ----------------------------------------
     # Adaptation / Training Settings
@@ -149,6 +155,14 @@ def argparser():
         default=128,
         dest='batch_size',
         help='Batch size for adaptation'
+    )
+    parser.add_argument(
+        '--micro_batch_size', '--micro-batch-size',
+        type=int,
+        default=None,
+        dest='micro_batch_size',
+        help='Micro-batch size for gradient accumulation and chunked inference. '
+             'If None, equals batch_size (no accumulation).'
     )
     parser.add_argument(
         '--lr',

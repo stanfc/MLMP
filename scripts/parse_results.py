@@ -2,8 +2,10 @@ import os
 import re
 import csv
 
-SAVE_DIR = os.path.join(os.path.dirname(__file__), ".save")
-OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "results_summary.csv")
+SCRIPT_DIR = os.path.dirname(__file__)
+REPO_DIR = os.path.join(SCRIPT_DIR, "..")
+SAVE_DIR = os.path.join(REPO_DIR, ".save")
+OUTPUT_CSV = os.path.join(REPO_DIR, "results", "results_summary.csv")
 
 
 def parse_metric(s):

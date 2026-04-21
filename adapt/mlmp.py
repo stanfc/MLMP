@@ -19,9 +19,11 @@ class MLMP:
     multiple prompt and multiple level optimization. 
     """
 
-    def __init__(self, ovss_type, ovss_backbone, lr, classes, vision_outputs=(-1,), 
-                 alpha_cls=0.0, steps=10, prompt_dir='prompts.yaml', 
+    def __init__(self, ovss_type, ovss_backbone, lr, classes, vision_outputs=(-1,),
+                 alpha_cls=0.0, steps=10, prompt_dir='prompts.yaml',
                  prompt_integration='loss', runtime_calculation=False,
+                 micro_batch_size=None,
+                 catseg_checkpoint=None,
                  device='cpu',
                  ):
         """
@@ -37,6 +39,7 @@ class MLMP:
             prompt_dir (str, optional): Path to the YAML file containing prompt templates. Defaults to 'prompts.yaml'.
             prompt_integration (str, optional): Integration mode for prompts, either 'loss' or 'text'. Defaults to 'loss'.
             runtime_calculation (bool, optional): Whether to track adaptation/evaluation runtimes. Defaults to False.
+            catseg_checkpoint (str, optional): Path to CAT-Seg pretrained checkpoint. Defaults to None.
             device (str, optional): Compute device, e.g., 'cpu' or 'cuda'. Defaults to 'cpu'.
         """
 
@@ -48,7 +51,7 @@ class MLMP:
             self.classes = classes
         else:
             raise Exception("Classes are required in the init")
-        
+
         self.vision_outputs = vision_outputs
         print(f"+++ The output layers from vision encoder that will be used: {self.vision_outputs}")
 
@@ -56,11 +59,17 @@ class MLMP:
         self.steps = steps
         self.prompt_dir = prompt_dir
         self.runtime = runtime_calculation
+        self.micro_batch_size = micro_batch_size
+        self.catseg_checkpoint = catseg_checkpoint
         self.device = device
 
+        self.is_catseg = (ovss_type == 'catseg')
 
         # Load the OVSS model and tokenizer
-        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device)
+        self.model, self.tokenize = load_ovss(
+            self.ovss_type, self.ovss_backbone, device=self.device,
+            classes=self.classes, catseg_checkpoint=self.catseg_checkpoint,
+        )
 
         if self.prompt_dir:
             # Load the prompt templates
@@ -70,7 +79,7 @@ class MLMP:
         else:
             self.prompt_templates = [REFERENCE_PROMPT]
 
-        
+
         assert prompt_integration in ['loss', 'text'], "prompt_integration should be either on 'loss' or 'text'"
         self.prompt_integration = prompt_integration
 
@@ -79,10 +88,30 @@ class MLMP:
         self.model.ln_final.requires_grad_(False)
         self.model.token_embedding.requires_grad_(False)
 
+        # For CAT-Seg: enable LN grads on both CLIP visual AND Aggregator
         self.model.visual = self.set_ln_grads(self.model.visual)
 
         # Collect the LayerNorm parameters
-        params, _ = self.collect_ln_params(self.model.visual)
+        params, param_names = self.collect_ln_params(self.model.visual)
+
+        if self.is_catseg:
+            # Also collect LN params from the Aggregator and decoder
+            agg_params, agg_names = self.collect_ln_params(self.model.aggregator)
+            params.extend(agg_params)
+            param_names.extend(agg_names)
+            # Enable gradients for Aggregator LN layers
+            self.model.aggregator = self.set_ln_grads(self.model.aggregator)
+            # Also set LN grads for upsample layers and head
+            self.model.sem_seg_head = self.set_ln_grads(self.model.sem_seg_head)
+            head_params, head_names = self.collect_ln_params(self.model.sem_seg_head)
+            # Avoid duplicates (aggregator params already collected)
+            existing_ids = {id(p) for p in params}
+            for p, n in zip(head_params, head_names):
+                if id(p) not in existing_ids:
+                    params.append(p)
+                    param_names.append(n)
+            print(f"+++ CAT-Seg: total LN params for TTA: {len(params)} "
+                  f"(CLIP visual + Aggregator + Head)")
 
         # print the parameters
         print_clip_parameters(self.model)
@@ -96,9 +125,12 @@ class MLMP:
         # Save the initial model and optimizer states
         self.model_state, self.optimizer_state = self.copy_model_and_optimizer(self.model, self.optimizer)
 
-        # extracting text features
-        with torch.no_grad():
-            self.text_x = self.extract_text_embeddings(self.classes,  self.prompt_templates, average=True).squeeze() # (class, 512)
+        # extracting text features (not needed for CAT-Seg which manages its own)
+        if not self.is_catseg:
+            with torch.no_grad():
+                self.text_x = self.extract_text_embeddings(self.classes, self.prompt_templates, average=True).squeeze()  # (class, 512)
+        else:
+            self.text_x = None
 
         # define variables to store adaptation and evaluation duration
         if self.runtime:
@@ -139,6 +171,7 @@ class MLMP:
         Continual TTA following the original TENT protocol:
           - N gradient steps on the current batch (no reset, state carries over)
           - inference uses the last step's forward pass directly (no extra forward)
+        Supports gradient accumulation when micro_batch_size is set.
 
         Args:
             x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
@@ -147,27 +180,42 @@ class MLMP:
             torch.Tensor: Per-class logits of shape (batch_size, num_classes, H, W).
         """
         t1 = time.time()
+        mbs = self.micro_batch_size
+        if mbs is not None and mbs < x.shape[0]:
+            chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+        else:
+            chunks = [x]
+        n_chunks = len(chunks)
+
         for iter in range(self.steps):
-            if self.prompt_integration == 'loss':
-                logits, _, _, cls_logits = self.model(x, self.text_x[:-1], True,
-                                                      interpolate=False,
-                                                      vision_outputs=self.vision_outputs,
-                                                      return_vanilla_cls=True,
-                                                      vision_out_type="mean")
-                entropy_per_pixel = self.softmax_entropy(logits)
-                entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)
-                loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
+            for chunk in chunks:
+                if self.is_catseg:
+                    logits, _, _, dummy_cls = self.model(chunk, interpolate=False, return_vanilla_cls=True)
+                    entropy_per_pixel = self.softmax_entropy(logits)
+                    entropy_per_cls = self.softmax_entropy(dummy_cls, dim=2)
+                    loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
 
-            elif self.prompt_integration == 'text':
-                logits, _, _ = self.model(x, self.text_x[-1], True,
-                                          interpolate=False,
-                                          vision_outputs=self.vision_outputs)
-                loss = self.softmax_entropy(logits).mean()
+                elif self.prompt_integration == 'loss':
+                    logits, _, _, cls_logits = self.model(chunk, self.text_x[:-1], True,
+                                                          interpolate=False,
+                                                          vision_outputs=self.vision_outputs,
+                                                          return_vanilla_cls=True,
+                                                          vision_out_type="mean")
+                    entropy_per_pixel = self.softmax_entropy(logits)
+                    entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)
+                    loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
 
-            else:
-                raise Exception("prompt_integration should be either on 'loss' or 'text'")
+                elif self.prompt_integration == 'text':
+                    logits, _, _ = self.model(chunk, self.text_x[-1], True,
+                                              interpolate=False,
+                                              vision_outputs=self.vision_outputs)
+                    loss = self.softmax_entropy(logits).mean()
 
-            loss.backward()
+                else:
+                    raise Exception("prompt_integration should be either on 'loss' or 'text'")
+
+                (loss / n_chunks).backward()
+
             self.optimizer.step()
             self.optimizer.zero_grad()
 
@@ -176,16 +224,10 @@ class MLMP:
             self.adapt_times.append(t2 - t1)
 
         # inference with the just-updated weights, identical to evaluate()
-        with torch.no_grad():
-            logits, _, _ = self.model(x, self.text_x[-1], True,
-                                      vision_outputs=self.vision_outputs,
-                                      interpolate=True,
-                                      vision_out_type="adaptive_weighted_mean",
-                                      save_weights=True)
-        return logits[0]  # (batch_size, num_classes, H, W)
+        return self.evaluate(x)
 
 
-    @torch.no_grad() 
+    @torch.no_grad()
     def evaluate(self, x):
         """
         Forward pass without adaptation.
@@ -199,10 +241,35 @@ class MLMP:
         """
 
         t1 = time.time()
-        logits, _, _ = self.model(x, self.text_x[-1], True, vision_outputs=self.vision_outputs, 
-                                  interpolate=True, vision_out_type="adaptive_weighted_mean", 
-                                  save_weights=True) # (#template, batch_size, #classes, H, W)
-        logits = logits[0]
+        mbs = self.micro_batch_size
+
+        if self.is_catseg:
+            # CAT-Seg evaluation path
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, interpolate=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(x, interpolate=True)
+                logits = logits[0]  # remove template dim
+        else:
+            # Original CLIP-based evaluation path
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, self.text_x[-1], True, vision_outputs=self.vision_outputs,
+                               interpolate=True, vision_out_type="adaptive_weighted_mean",
+                               save_weights=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(x, self.text_x[-1], True, vision_outputs=self.vision_outputs,
+                                          interpolate=True, vision_out_type="adaptive_weighted_mean",
+                                          save_weights=True)  # (#template, batch_size, #classes, H, W)
+                logits = logits[0]
+
         t2 = time.time()
         if self.runtime:
             self.eval_times.append(t2-t1)
@@ -223,43 +290,55 @@ class MLMP:
     def perform_adaptation(self, x):
         """
         Forward pass with adaptation for test-time. The model adapts itself during testing by updating on every forward pass.
+        Supports gradient accumulation when micro_batch_size is set.
 
         Args:
             x (torch.Tensor): Input image tensor of shape (batch_size, C, H, W).
-        
+
         Returns:
             List[float]: Recorded loss values for each adaptation iteration.
         """
 
         t1 = time.time()
         loss_report = []
+        mbs = self.micro_batch_size
+        if mbs is not None and mbs < x.shape[0]:
+            chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+        else:
+            chunks = [x]
+        n_chunks = len(chunks)
+
         for iter in range(self.steps):
-            if self.prompt_integration == 'loss':
-                logits, _, _, cls_logits = self.model(x, self.text_x[:-1], True, interpolate=False,
-                                                      vision_outputs=self.vision_outputs, return_vanilla_cls=True, 
-                                                      vision_out_type="mean") # (#templates, batch_size, #class, W, H)
-                
-                # adapt
-                entropy_per_pixel = self.softmax_entropy(logits)  # Shape: (#template, batch_size, H, W)
-                entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)
-                
-                # Average over all prompt templates, pixels and batch samples
-                loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
+            total_loss = 0.0
+            for chunk in chunks:
+                if self.is_catseg:
+                    # CAT-Seg: model handles text internally
+                    logits, _, _, dummy_cls = self.model(chunk, interpolate=False, return_vanilla_cls=True)
+                    entropy_per_pixel = self.softmax_entropy(logits)
+                    entropy_per_cls = self.softmax_entropy(dummy_cls, dim=2)
+                    loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
 
+                elif self.prompt_integration == 'loss':
+                    logits, _, _, cls_logits = self.model(chunk, self.text_x[:-1], True, interpolate=False,
+                                                          vision_outputs=self.vision_outputs, return_vanilla_cls=True,
+                                                          vision_out_type="mean")
+                    entropy_per_pixel = self.softmax_entropy(logits)
+                    entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)
+                    loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
 
-            elif self.prompt_integration == 'text':
-                logits, _, _ = self.model(x, self.text_x[-1], True, interpolate=False,
-                                         vision_outputs=self.vision_outputs) # (1, batch_size, #classes, H, W)                                         
-                entropy_per_pixel = self.softmax_entropy(logits)  # Shape: (batch_size, H, W)
+                elif self.prompt_integration == 'text':
+                    logits, _, _ = self.model(chunk, self.text_x[-1], True, interpolate=False,
+                                             vision_outputs=self.vision_outputs)
+                    entropy_per_pixel = self.softmax_entropy(logits)
+                    loss = entropy_per_pixel.mean()
 
-                # Average over all pixels and batch samples
-                loss = entropy_per_pixel.mean()
+                else:
+                    raise Exception("prompt_integration should be either on 'loss' or 'text'")
 
-            else:
-                raise Exception("prompt_integration should be either on 'loss' or 'text'")
-        
-            loss_report.append(loss.item())
-            loss.backward()
+                (loss / n_chunks).backward()
+                total_loss += loss.item() / n_chunks
+
+            loss_report.append(total_loss)
             self.optimizer.step()
             self.optimizer.zero_grad()
 

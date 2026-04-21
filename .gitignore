@@ -106,3 +106,7 @@ venv.bak/
 .qualitative/
 .save/
 *_log*.txt
+
+results/*
+.claude/*
+.weights/*

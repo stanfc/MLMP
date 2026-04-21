@@ -16,7 +16,7 @@ OVSS_BACKBONE="ViT-L/14"
 # Hyperparameters
 BATCH_SIZE=2
 LR=0.001
-STEPS=10
+STEPS=1
 TRIALS=3
 
 # Output

@@ -61,7 +61,8 @@ class CoTTA(nn.Module):
                  prompt_dir='prompts.yaml', prompt_integration='text',
                  mt=0.999, rst=0.01, ap=0.92,
                  aug_n=32, runtime_calculation=False, device='cpu',
-                 finetune_mode='ln'):
+                 finetune_mode='ln',
+                 catseg_checkpoint=None):
         super().__init__()
         assert finetune_mode in ('ln', 'full'), f"finetune_mode must be 'ln' or 'full', got {finetune_mode!r}"
 
@@ -78,13 +79,32 @@ class CoTTA(nn.Module):
         self.runtime = runtime_calculation
         self.device = device
         self.finetune_mode = finetune_mode
+        self.classes = classes
+        self.catseg_checkpoint = catseg_checkpoint
+        self.is_catseg = (ovss_type == 'catseg')
 
         print(f"+++ CoTTA: vision_outputs={self.vision_outputs}, mt={mt}, rst={rst}, ap={ap}, finetune_mode={finetune_mode}")
 
         # Load NA-CLIP
-        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+        self.model, self.tokenize = load_ovss(
+            ovss_type, ovss_backbone, device=device,
+            classes=self.classes, catseg_checkpoint=self.catseg_checkpoint,
+        )
         self.model = configure_model(self.model, finetune_mode)
         params, _ = collect_params(self.model, finetune_mode)
+
+        if self.is_catseg:
+            self.model.aggregator = set_ln_grads(self.model.aggregator)
+            self.model.sem_seg_head = set_ln_grads(self.model.sem_seg_head)
+            agg_params, _ = collect_ln_params(self.model.aggregator)
+            head_params, _ = collect_ln_params(self.model.sem_seg_head)
+            existing_ids = {id(p) for p in params}
+            for p in agg_params + head_params:
+                if id(p) not in existing_ids:
+                    params.append(p)
+                    existing_ids.add(id(p))
+            print(f"+++ CAT-Seg CoTTA: total LN params for TTA: {len(params)}")
+
         print_clip_parameters(self.model)
         self.optimizer = optim.Adam(params, lr=lr, betas=(0.9, 0.999), weight_decay=0.0)
         print_optimizer_parameters(self.optimizer, self.model)
@@ -99,10 +119,13 @@ class CoTTA(nn.Module):
         assert prompt_integration in ['loss', 'text']
 
         # Pre-compute text embeddings (frozen)
-        with torch.no_grad():
-            self.text_x = self._extract_text_embeddings(
-                classes, self.prompt_templates, average=True
-            ).squeeze()  # (num_templates+1, num_classes, embed_dim)
+        if not self.is_catseg:
+            with torch.no_grad():
+                self.text_x = self._extract_text_embeddings(
+                    classes, self.prompt_templates, average=True
+                ).squeeze()  # (num_templates+1, num_classes, embed_dim)
+        else:
+            self.text_x = None
 
         self.model_state, self.optimizer_state, self.model_ema, self.model_anchor = \
             copy_model_and_optimizer(self.model, self.optimizer)
@@ -141,13 +164,16 @@ class CoTTA(nn.Module):
     def evaluate(self, x):
         """Inference with current student model."""
         t1 = time.time()
-        logits, _, _ = self.model(
-            x, self.text_x[-1], text_ensemble=True,
-            vision_outputs=self.vision_outputs,
-            interpolate=True,
-            vision_out_type="adaptive_weighted_mean",
-            save_weights=True,
-        )
+        if self.is_catseg:
+            logits, _, _ = self.model(x, interpolate=True)
+        else:
+            logits, _, _ = self.model(
+                x, self.text_x[-1], text_ensemble=True,
+                vision_outputs=self.vision_outputs,
+                interpolate=True,
+                vision_out_type="adaptive_weighted_mean",
+                save_weights=True,
+            )
         logits = logits[0]  # (batch, num_classes, H, W)
         if self.runtime:
             self.eval_times.append(time.time() - t1)
@@ -170,7 +196,10 @@ class CoTTA(nn.Module):
         self.model_ema.train()
 
         # Student forward
-        if self.prompt_integration == 'loss':
+        if self.is_catseg:
+            outputs, _, _ = self.model(x, interpolate=False)
+            cls_logits = None
+        elif self.prompt_integration == 'loss':
             outputs, _, _, cls_logits = self.model(
                 x, self.text_x[:-1], text_ensemble=True,
                 vision_outputs=self.vision_outputs,
@@ -190,30 +219,43 @@ class CoTTA(nn.Module):
             cls_logits = None
 
         # Teacher Prediction
-        anchor_prob = self.model_anchor(
-            x, self.text_x[-1], text_ensemble=True,
-            vision_outputs=self.vision_outputs,
-            interpolate=False,
-            vision_out_type="mean",
-        )[0][0].softmax(dim=1).max(dim=1)[0]  # (B, H, W)
-        standard_ema = self.model_ema(
-            x, self.text_x[-1], text_ensemble=True,
-            vision_outputs=self.vision_outputs,
-            interpolate=False,
-            vision_out_type="mean",
-        )[0][0]  # (B, C, H, W)
+        if self.is_catseg:
+            anchor_prob = self.model_anchor(
+                x, interpolate=False,
+            )[0][0].softmax(dim=1).max(dim=1)[0]  # (B, H, W)
+            standard_ema = self.model_ema(
+                x, interpolate=False,
+            )[0][0]  # (B, C, H, W)
+        else:
+            anchor_prob = self.model_anchor(
+                x, self.text_x[-1], text_ensemble=True,
+                vision_outputs=self.vision_outputs,
+                interpolate=False,
+                vision_out_type="mean",
+            )[0][0].softmax(dim=1).max(dim=1)[0]  # (B, H, W)
+            standard_ema = self.model_ema(
+                x, self.text_x[-1], text_ensemble=True,
+                vision_outputs=self.vision_outputs,
+                interpolate=False,
+                vision_out_type="mean",
+            )[0][0]  # (B, C, H, W)
 
         # Augmentation-averaged Prediction
         outputs_emas = []
         to_aug = anchor_prob.mean() < self.ap
         if to_aug:
             for i in range(self.aug_n):
-                outputs_ = self.model_ema(
-                    self.transform(x), self.text_x[-1], text_ensemble=True,
-                    vision_outputs=self.vision_outputs,
-                    interpolate=False,
-                    vision_out_type="mean",
-                )[0][0].detach()
+                if self.is_catseg:
+                    outputs_ = self.model_ema(
+                        self.transform(x), interpolate=False,
+                    )[0][0].detach()
+                else:
+                    outputs_ = self.model_ema(
+                        self.transform(x), self.text_x[-1], text_ensemble=True,
+                        vision_outputs=self.vision_outputs,
+                        interpolate=False,
+                        vision_out_type="mean",
+                    )[0][0].detach()
                 outputs_emas.append(outputs_)
 
         # Threshold choice discussed in supplementary
@@ -320,6 +362,27 @@ def configure_model(model, finetune_mode='ln'):
         if finetune_mode == 'full' or isinstance(m, nn.LayerNorm):
             m.requires_grad_(True)
     return model
+
+
+def set_ln_grads(module):
+    """Disable grads globally on *module*, then re-enable LayerNorm params."""
+    module.requires_grad_(False)
+    for m in module.modules():
+        if isinstance(m, nn.LayerNorm):
+            m.requires_grad_(True)
+    return module
+
+
+def collect_ln_params(module):
+    """Collect LayerNorm weight/bias from *module*."""
+    params, names = [], []
+    for nm, m in module.named_modules():
+        if isinstance(m, nn.LayerNorm):
+            for np_, p in m.named_parameters():
+                if np_ in ['weight', 'bias'] and p.requires_grad:
+                    params.append(p)
+                    names.append(f"{nm}.{np_}")
+    return params, names
 
 
 def check_model(model):

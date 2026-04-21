@@ -22,8 +22,8 @@ class TPT(nn.Module):
     adapts them per test image via entropy minimization, keeping the backbone frozen.
     """
 
-    def __init__(self, ovss_type, ovss_backbone, classes, lr=5e-3, n_ctx=4, steps=1, 
-                 runtime_calculation=False, device= "cuda",
+    def __init__(self, ovss_type, ovss_backbone, classes, lr=5e-3, n_ctx=4, steps=1,
+                 runtime_calculation=False, catseg_checkpoint=None, device= "cuda",
                  ):
         """
         Initialize the TPT adaptation module.
@@ -57,8 +57,13 @@ class TPT(nn.Module):
         self.runtime = runtime_calculation
         self.device = device
 
+        self.catseg_checkpoint = catseg_checkpoint
+
         # ---------- OVSS Model ----------
-        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device)
+        self.model, self.tokenize = load_ovss(
+            self.ovss_type, self.ovss_backbone, device=self.device,
+            classes=self.classes, catseg_checkpoint=self.catseg_checkpoint,
+        )
 
         # ---------- learnable soft tokens (initialised from "a photo of a") ----------
         with torch.no_grad():

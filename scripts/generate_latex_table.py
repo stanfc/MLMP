@@ -1,8 +1,12 @@
+import os
 import csv
 from collections import defaultdict
 
-INPUT_CSV = "results_summary.csv"
-OUTPUT_TEX = "results_table.tex"
+SCRIPT_DIR = os.path.dirname(__file__)
+REPO_DIR = os.path.join(SCRIPT_DIR, "..")
+RESULTS_DIR = os.path.join(REPO_DIR, "results")
+INPUT_CSV = os.path.join(RESULTS_DIR, "results_summary.csv")
+OUTPUT_TEX = os.path.join(RESULTS_DIR, "results_table.tex")
 
 CORRUPTION_ORDER = [
     "gaussian_noise", "shot_noise", "impulse_noise",

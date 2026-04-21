@@ -22,8 +22,9 @@ class CLIPARTT:
     a self-distillation loss to optimize only the visual encoder’s LayerNorm parameters at test time.
     """
 
-    def __init__(self, ovss_type, ovss_backbone, lr, classes, clipartt_k=3, steps=10, 
-                 prompt_dir=None, runtime_calculation=False, 
+    def __init__(self, ovss_type, ovss_backbone, lr, classes, clipartt_k=3, steps=10,
+                 prompt_dir=None, runtime_calculation=False,
+                 catseg_checkpoint=None,
                  device='cpu',
                  ):
 
@@ -53,10 +54,15 @@ class CLIPARTT:
         self.k = clipartt_k
         self.prompt_dir = prompt_dir
         self.runtime = runtime_calculation
+        self.catseg_checkpoint = catseg_checkpoint
         self.device = device
+        self.is_catseg = (ovss_type == 'catseg')
 
         # Load the OVSS model and tokenizer
-        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device)
+        self.model, self.tokenize = load_ovss(
+            self.ovss_type, self.ovss_backbone, device=self.device,
+            classes=self.classes, catseg_checkpoint=self.catseg_checkpoint,
+        )
 
         if self.prompt_dir:
             # Load the prompt templates
@@ -76,6 +82,18 @@ class CLIPARTT:
         # Collect the LayerNorm parameters
         params, _ = self.collect_ln_params(self.model.visual)
 
+        if self.is_catseg:
+            self.model.aggregator = self.set_ln_grads(self.model.aggregator)
+            self.model.sem_seg_head = self.set_ln_grads(self.model.sem_seg_head)
+            agg_params, _ = self.collect_ln_params(self.model.aggregator)
+            head_params, _ = self.collect_ln_params(self.model.sem_seg_head)
+            existing_ids = {id(p) for p in params}
+            for p in agg_params + head_params:
+                if id(p) not in existing_ids:
+                    params.append(p)
+                    existing_ids.add(id(p))
+            print(f"+++ CAT-Seg CLIPArTT: total LN params for TTA: {len(params)}")
+
         # print the parameters
         print_clip_parameters(self.model)
 
@@ -87,9 +105,12 @@ class CLIPARTT:
         self.model_state, self.optimizer_state = self.copy_model_and_optimizer(self.model, self.optimizer)
 
 
-        with torch.no_grad():
-            self.text_x = self.extract_text_embeddings(self.classes, self.prompt_templates,
-                                                       average=True).squeeze()  # (class, 512)
+        if not self.is_catseg:
+            with torch.no_grad():
+                self.text_x = self.extract_text_embeddings(self.classes, self.prompt_templates,
+                                                           average=True).squeeze()  # (class, 512)
+        else:
+            self.text_x = None
             
         # define variables to store adaptation and evaluation duration
         if self.runtime:
@@ -126,9 +147,13 @@ class CLIPARTT:
         """
 
         t1 = time.time()
-        logits, _, _ = self.model(x, self.text_x[-1], True, 
-                                  interpolate=True)  # (#template, batch_size, #classes, H, W)
-        logits = logits[0]
+        if self.is_catseg:
+            logits, _, _ = self.model(x, interpolate=True)
+            logits = logits[0]
+        else:
+            logits, _, _ = self.model(x, self.text_x[-1], True,
+                                      interpolate=True)  # (#template, batch_size, #classes, H, W)
+            logits = logits[0]
         t2 = time.time()
         if self.runtime:
             self.eval_times.append(t2-t1)
@@ -160,7 +185,10 @@ class CLIPARTT:
         loss_report = []
         for _ in range(self.steps):
             with torch.no_grad():
-                similarity, _, _ = self.model(x,  text_feat, True, interpolate=False)
+                if self.is_catseg:
+                    similarity, _, _ = self.model(x, interpolate=False)
+                else:
+                    similarity, _, _ = self.model(x,  text_feat, True, interpolate=False)
 
            # similarity = (100.0 * image_features @ text_feat.T).softmax(dim=-1)
             values, pred = similarity[0].topk(self.k, 1, True, True)
@@ -170,7 +198,10 @@ class CLIPARTT:
 
             # Calculating the Loss
             # cosine similarity as logits
-            logits, image_features, text_features = self.model(x,  pred_inputs, False, interpolate=False)
+            if self.is_catseg:
+                logits, image_features, text_features = self.model(x, interpolate=False)
+            else:
+                logits, image_features, text_features = self.model(x,  pred_inputs, False, interpolate=False)
             image_features = image_features[:, 1:]
             image_features = image_features.reshape(-1, image_features.shape[-1])
             images_similarity = image_features @ image_features.t()

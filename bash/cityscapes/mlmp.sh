@@ -1,5 +1,5 @@
 # GPU Configuration
-GPU_ID=0
+GPU_ID=3
 
 # Dataset Configuration
 DATASET=CityscapesDataset
@@ -17,10 +17,10 @@ OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
 # Hyperparameters
-BATCH_SIZE=2
-LR=0.001
+BATCH_SIZE=1
+LR=0.01
 STEPS=10
-TRIALS=3
+TRIALS=1
 
 # Output
 SAVE_DIR=".save/${DATASET}/${METHOD}/"

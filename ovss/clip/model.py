@@ -8,6 +8,18 @@ import torch.nn.functional as F
 from torch import nn
 
 
+def _safe_interpolate(x, size, mode='bilinear', align_corners=False):
+    """Chunked bilinear interpolation to avoid INT_MAX overflow for large batches."""
+    max_elements = 2**31 - 1
+    elements_per_sample = x.shape[1] * size[0] * size[1]
+    chunk_size = max(1, max_elements // elements_per_sample)
+    if x.shape[0] <= chunk_size:
+        return F.interpolate(x, size=size, mode=mode, align_corners=align_corners)
+    chunks = [F.interpolate(x[i:i+chunk_size], size=size, mode=mode, align_corners=align_corners)
+              for i in range(0, x.shape[0], chunk_size)]
+    return torch.cat(chunks, dim=0)
+
+
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -579,12 +591,13 @@ class CLIP(nn.Module):
             logits = logits.permute(0, 1, 3, 2).reshape(logits.shape[0], logits.shape[1], out_dim, w, h) # (#templates, batch_size, #class, W, H)
             
             if interpolate:
-                # Perform interpolation
+                # Perform interpolation (chunked to avoid INT_MAX overflow for large batches)
+                target_size = image.shape[-2:]
                 logits = logits.reshape(-1, out_dim, w, h)  # Flatten templates and batch dimensions for interpolation
-                logits = nn.functional.interpolate(logits, size=image.shape[-2:], mode='bilinear', align_corners=False)  # (#templates*batch_size, #class, W', H')
+                logits = _safe_interpolate(logits, size=target_size, mode='bilinear', align_corners=False)  # (#templates*batch_size, #class, W', H')
 
                 # Reshape back to include template and batch dimensions
-                logits = logits.view(temp_dim, b_dim, out_dim, image.shape[-2], image.shape[-1])  # (#templates, batch_size, #class, W', H')
+                logits = logits.view(temp_dim, b_dim, out_dim, target_size[0], target_size[1])  # (#templates, batch_size, #class, W', H')
 
             if return_vanilla_cls:
                 vanilla_cls_features = vanilla_cls_features / vanilla_cls_features.norm(dim=-1, keepdim=True)
@@ -641,12 +654,13 @@ class CLIP(nn.Module):
             logits = logits.permute(0, 1, 3, 2).reshape(logits.shape[0], logits.shape[1], out_dim, w, h) # (#templates, batch_size, #class, W, H)
             
             if interpolate:
-                # Perform interpolation
+                # Perform interpolation (chunked to avoid INT_MAX overflow for large batches)
+                target_size = image.shape[-2:]
                 logits = logits.reshape(-1, out_dim, w, h)  # Flatten templates and batch dimensions for interpolation
-                logits = nn.functional.interpolate(logits, size=image.shape[-2:], mode='bilinear', align_corners=False)  # (#templates*batch_size, #class, W', H')
+                logits = _safe_interpolate(logits, size=target_size, mode='bilinear', align_corners=False)  # (#templates*batch_size, #class, W', H')
 
                 # Reshape back to include template and batch dimensions
-                logits = logits.view(temp_dim, b_dim, out_dim, image.shape[-2], image.shape[-1])  # (#templates, batch_size, #class, W', H')
+                logits = logits.view(temp_dim, b_dim, out_dim, target_size[0], target_size[1])  # (#templates, batch_size, #class, W', H')
 
             if return_vanilla_cls:
                 vanilla_cls_features = vanilla_cls_features / vanilla_cls_features.norm(dim=-1, keepdim=True)

@@ -21,7 +21,8 @@ class DPCore(nn.Module):
                  vision_outputs=(-1,), steps=1, episodic=False,
                  prompt_dir='prompts.yaml',
                  temp_tau=3.0, ema_alpha=0.999, thr_rho=0.8,
-                 prompt_num=1, runtime_calculation=False, verbose_dpcore=False, device='cpu'):
+                 prompt_num=1, runtime_calculation=False, verbose_dpcore=False,
+                 micro_batch_size=None, catseg_checkpoint=None, device='cpu'):
         super().__init__()
         self.lamda = 1.0
         self.lr = lr
@@ -37,12 +38,17 @@ class DPCore(nn.Module):
         assert steps > 0, "dpcore requires >= 1 step(s) to forward and update"
         self.episodic = episodic
         self.runtime = runtime_calculation
+        self.micro_batch_size = micro_batch_size
+        self.catseg_checkpoint = catseg_checkpoint
+        self.is_catseg = (ovss_type == 'catseg')
+        self.classes = classes
         self.device = device
 
         print(f"+++ DPCore: vision_outputs={vision_outputs}, temp_tau={temp_tau}, thr_rho={thr_rho}, ema_alpha={ema_alpha}")
 
         # Load NA-CLIP and wrap visual encoder with prompt injection
-        base_model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+        base_model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device,
+                                              classes=self.classes, catseg_checkpoint=self.catseg_checkpoint)
         self.model = configure_model(base_model, prompt_num)
         prompt_params = collect_params(self.model)
         print_clip_parameters(self.model)
@@ -57,10 +63,13 @@ class DPCore(nn.Module):
             self.prompt_templates = [REFERENCE_PROMPT]
 
         # Pre-compute text embeddings (frozen)
-        with torch.no_grad():
-            self.text_x = self._extract_text_embeddings(
-                classes, self.prompt_templates, average=True
-            ).squeeze()  # (num_templates+1, num_classes, embed_dim)
+        if not self.is_catseg:
+            with torch.no_grad():
+                self.text_x = self._extract_text_embeddings(
+                    classes, self.prompt_templates, average=True
+                ).squeeze()  # (num_templates+1, num_classes, embed_dim)
+        else:
+            self.text_x = None
 
         self.model_state, self.optimizer_state = \
             copy_model_and_optimizer(self.model, self.optimizer)
@@ -93,14 +102,38 @@ class DPCore(nn.Module):
     @torch.no_grad()
     def evaluate(self, x):
         """Inference with current student model."""
-        logits, _, _ = self.model(
-            x, self.text_x[-1], text_ensemble=True,
-            vision_outputs=self.vision_outputs,
-            interpolate=True,
-            vision_out_type="adaptive_weighted_mean",
-            save_weights=True,
-        )
-        return logits[0]  # (batch, num_classes, H, W)
+        mbs = self.micro_batch_size
+        if self.is_catseg:
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, interpolate=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(x, interpolate=True)
+                logits = logits[0]
+        else:
+            if mbs is not None and mbs < x.shape[0]:
+                chunks = [x[i:i+mbs] for i in range(0, x.shape[0], mbs)]
+                logits = torch.cat([
+                    self.model(chunk, self.text_x[-1], text_ensemble=True,
+                               vision_outputs=self.vision_outputs,
+                               interpolate=True,
+                               vision_out_type="adaptive_weighted_mean",
+                               save_weights=True)[0][0]
+                    for chunk in chunks
+                ], dim=0)
+            else:
+                logits, _, _ = self.model(
+                    x, self.text_x[-1], text_ensemble=True,
+                    vision_outputs=self.vision_outputs,
+                    interpolate=True,
+                    vision_out_type="adaptive_weighted_mean",
+                    save_weights=True,
+                )
+                logits = logits[0]
+        return logits  # (batch, num_classes, H, W)
 
     def reset(self):
         load_model_and_optimizer(self.model, self.optimizer,
@@ -124,7 +157,8 @@ class DPCore(nn.Module):
         """Evaluate the coreset on a batch of samples."""
         if self.train_info is None:
             raise RuntimeError("train_info is not set. Call obtain_src_stat() before adaptation.")
-        loss, batch_mean, batch_std = forward_and_get_loss(x, self.model, self.lamda, self.train_info, with_prompt=False)
+        loss, batch_mean, batch_std = forward_and_get_loss(x, self.model, self.lamda, self.train_info,
+                                                           with_prompt=False, micro_batch_size=self.micro_batch_size)
         is_ID = False
         weights = None
         weighted_prompts = None
@@ -135,7 +169,8 @@ class DPCore(nn.Module):
             self.model.visual.prompts = torch.nn.Parameter(weighted_prompts.to(self.device))
             self.model.visual.prompts.requires_grad_(False)
 
-            loss_new, _, _ = forward_and_get_loss(x, self.model, self.lamda, self.train_info, with_prompt=True)
+            loss_new, _, _ = forward_and_get_loss(x, self.model, self.lamda, self.train_info,
+                                                  with_prompt=True, micro_batch_size=self.micro_batch_size)
             if self.verbose:
                 print(f"[coreset eval] loss_raw={loss:.4f}, loss_new={loss_new:.4f}, ratio={loss_new/loss:.4f}, thr={self.thr_rho}, is_ID={loss_new < loss * self.thr_rho}")
             if loss_new < loss * self.thr_rho:
@@ -161,7 +196,9 @@ class DPCore(nn.Module):
                 outputs, loss, batch_mean, batch_std = forward_and_adapt(
                     x, self.model, optimizer, self.lamda, self.train_info,
                     self.text_x, self.vision_outputs,
-                    return_output=(step == self.E_ID - 1))
+                    return_output=(step == self.E_ID - 1),
+                    micro_batch_size=self.micro_batch_size,
+                    is_catseg=self.is_catseg)
             self._update_coreset(weights, batch_mean, batch_std)
 
         else:
@@ -174,7 +211,9 @@ class DPCore(nn.Module):
                 outputs, loss, _, _ = forward_and_adapt(
                     x, self.model, self.optimizer, self.lamda, self.train_info,
                     self.text_x, self.vision_outputs,
-                    return_output=(step == self.E_OOD - 1))
+                    return_output=(step == self.E_OOD - 1),
+                    micro_batch_size=self.micro_batch_size,
+                    is_catseg=self.is_catseg)
                 if self.verbose:
                     print(f"  [OOD step {step:03d}] loss={loss.item():.4f}")
 
@@ -189,19 +228,42 @@ class DPCore(nn.Module):
     def obtain_src_stat(self, data_loader, num_samples=5000):
         num = 0
         features = []
+        mbs = self.micro_batch_size
         with torch.no_grad():
             for data in data_loader:
                 images = data['img_patches'].to(self.device)
-                feature = forward_raw_features(self.model, images)
+                if self.is_catseg:
+                    if mbs is not None and mbs < images.shape[0]:
+                        feature = torch.cat([forward_raw_features(self.model, images[i:i+mbs])
+                                             for i in range(0, images.shape[0], mbs)], dim=0)
+                        logits_list = [self.model(images[i:i+mbs], interpolate=False)[0][0]
+                                       for i in range(0, images.shape[0], mbs)]
+                        logits_0 = torch.cat(logits_list, dim=0)
+                    else:
+                        feature = forward_raw_features(self.model, images)
+                        logits, _, _ = self.model(images, interpolate=False)
+                        logits_0 = logits[0]
+                else:
+                    if mbs is not None and mbs < images.shape[0]:
+                        feature = torch.cat([forward_raw_features(self.model, images[i:i+mbs])
+                                             for i in range(0, images.shape[0], mbs)], dim=0)
+                        logits_list = [self.model(images[i:i+mbs], self.text_x[-1], text_ensemble=True,
+                                                 vision_outputs=self.vision_outputs,
+                                                 interpolate=False, vision_out_type="mean")[0][0]
+                                       for i in range(0, images.shape[0], mbs)]
+                        logits_0 = torch.cat(logits_list, dim=0)
+                    else:
+                        feature = forward_raw_features(self.model, images)
+                        logits, _, _ = self.model(
+                            images, self.text_x[-1], text_ensemble=True,
+                            vision_outputs=self.vision_outputs,
+                            interpolate=False,
+                            vision_out_type="mean",
+                        )
+                        logits_0 = logits[0]
 
-                logits, _, _ = self.model(
-                    images, self.text_x[-1], text_ensemble=True,
-                    vision_outputs=self.vision_outputs,
-                    interpolate=False,
-                    vision_out_type="mean",
-                )
-                ent = softmax_entropy(logits[0])
-                num_classes = logits[0].shape[1]
+                ent = softmax_entropy(logits_0)
+                num_classes = logits_0.shape[1]
                 selected_indices = torch.where(ent.mean(dim=(-2, -1)) < math.log(num_classes) / 2 - 1)[0]
                 feature = feature[selected_indices]
 
@@ -253,12 +315,13 @@ def forward_raw_features(model, images):
     return model.visual.forward_raw_features(images)
 
 
-# @torch.no_grad()
-def forward_and_get_loss(images, model, lamda, train_info, with_prompt=False):
-    if with_prompt:
-        cls_features = model.visual.forward_features(images)[:, 0]
+def forward_and_get_loss(images, model, lamda, train_info, with_prompt=False, micro_batch_size=None):
+    fwd = model.visual.forward_features if with_prompt else model.visual.forward_raw_features
+    mbs = micro_batch_size
+    if mbs is not None and mbs < images.shape[0]:
+        cls_features = torch.cat([fwd(images[i:i+mbs])[:, 0] for i in range(0, images.shape[0], mbs)], dim=0)
     else:
-        cls_features = model.visual.forward_raw_features(images)[:, 0]
+        cls_features = fwd(images)[:, 0]
 
     """discrepancy loss"""
     batch_std, batch_mean = torch.std_mean(cls_features, dim=0)
@@ -295,33 +358,79 @@ def calculate_weights(coreset, batch_mean, batch_std, lamda, temp_tau):
 
 @torch.enable_grad()
 def forward_and_adapt(x, model, optimizer, lamda, train_info, text_x, vision_outputs,
-                      return_output=False):
+                      return_output=False, micro_batch_size=None, is_catseg=False):
     """Forward and adapt model on batch of data.
     Measure discrepancy loss, take gradients, and update params.
+
+    When micro_batch_size is set, each chunk independently computes its own
+    mean/std loss against the source statistics and accumulates gradients.
+    Only one chunk's computation graph lives in memory at a time.
+
     Only computes segmentation output when return_output=True (last step only).
     """
-    features = model.visual.forward_features(x)
-    cls_features = features[:, 0]
-    batch_std, batch_mean = torch.std_mean(cls_features, dim=0)
+    mbs = micro_batch_size
+    if mbs is not None and mbs < x.shape[0]:
+        n_chunks = math.ceil(x.shape[0] / mbs)
+        # Accumulate detached stats for reporting
+        all_cls = []
+        for i in range(0, x.shape[0], mbs):
+            cls_feat = model.visual.forward_features(x[i:i+mbs])[:, 0]
+            all_cls.append(cls_feat.detach())
+            chunk_std, chunk_mean = torch.std_mean(cls_feat, dim=0)
+            std_loss = torch.norm(chunk_std - train_info[0].to(cls_feat.device), p=2)
+            mean_loss = torch.norm(chunk_mean - train_info[1].to(cls_feat.device), p=2)
+            ((lamda * std_loss + mean_loss) / n_chunks).backward()
 
-    std_loss = torch.norm(batch_std - train_info[0].to(cls_features.device), p=2)
-    mean_loss = torch.norm(batch_mean - train_info[1].to(cls_features.device), p=2)
-    loss = lamda * std_loss + mean_loss
+        optimizer.step()
+        optimizer.zero_grad()
 
-    loss.backward()
-    optimizer.step()
-    optimizer.zero_grad()
+        # Report full-batch statistics
+        with torch.no_grad():
+            cls_all = torch.cat(all_cls, dim=0)
+            batch_std, batch_mean = torch.std_mean(cls_all, dim=0)
+            loss = lamda * torch.norm(batch_std - train_info[0].to(batch_std.device), p=2) \
+                 + torch.norm(batch_mean - train_info[1].to(batch_mean.device), p=2)
+    else:
+        features = model.visual.forward_features(x)
+        cls_features = features[:, 0]
+        batch_std, batch_mean = torch.std_mean(cls_features, dim=0)
+
+        std_loss = torch.norm(batch_std - train_info[0].to(cls_features.device), p=2)
+        mean_loss = torch.norm(batch_mean - train_info[1].to(cls_features.device), p=2)
+        loss = lamda * std_loss + mean_loss
+
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
 
     output = None
     if return_output:
         with torch.no_grad():
-            out, _, _ = model(
-                x, text_x[-1], text_ensemble=True,
-                vision_outputs=vision_outputs,
-                interpolate=False,
-                vision_out_type="mean",
-            )
-            output = out[0]
+            if is_catseg:
+                if mbs is not None and mbs < x.shape[0]:
+                    output = torch.cat([
+                        model(x[i:i+mbs], interpolate=False)[0][0]
+                        for i in range(0, x.shape[0], mbs)
+                    ], dim=0)
+                else:
+                    out, _, _ = model(x, interpolate=False)
+                    output = out[0]
+            else:
+                if mbs is not None and mbs < x.shape[0]:
+                    output = torch.cat([
+                        model(x[i:i+mbs], text_x[-1], text_ensemble=True,
+                              vision_outputs=vision_outputs,
+                              interpolate=False, vision_out_type="mean")[0][0]
+                        for i in range(0, x.shape[0], mbs)
+                    ], dim=0)
+                else:
+                    out, _, _ = model(
+                        x, text_x[-1], text_ensemble=True,
+                        vision_outputs=vision_outputs,
+                        interpolate=False,
+                        vision_out_type="mean",
+                    )
+                    output = out[0]
 
     return output, loss, batch_mean, batch_std
 
