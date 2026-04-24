@@ -4,6 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
+> **🟢 Current status (2026-04-24)**: `cma_proto_continual` implemented and sanity-tested; not yet run. Next action: `bash bash/ACDC_10_round/cma_proto_continual.sh`.
+> **For a fast orientation on the active experiment, read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first** — it consolidates the research arc (what was tried, what we learned, what's next) in one place.
+
 ## Research Goal
 
 **MLMP** (Multi-Level Multi-Prompt, NeurIPS 2025, arXiv:2505.21844) is a TTA framework for Open-Vocabulary Semantic Segmentation (OVSS) using NA-CLIP (ViT-L/14).
@@ -79,21 +82,26 @@ Phase 4 — Degenerate steady state (~7.9 mIoU):
 
 ---
 
-## Proposed New Method (see `proposal.md` for full details)
+## Proposed New Method (see `proposal.md` for full directions, `docs/cma_continual_spec.md` and `docs/cma_proto_continual_spec.md` for active implementations)
 
-**Primary: Direction 1 + Direction 2 combined**
+**Primary: Direction 1 + Direction 2 combined** (`cma_proto_continual`). D1 implemented first as `cma_continual`; it revealed that confirmation bias causes collapse even without entropy minimization, so D2 was implemented on top of D1.
 
-### Direction 1 — Cross-modal Alignment TTA (primary signal)
-Use frozen text embeddings as supervision. For confident pixels, maximize cosine similarity between visual features and their predicted class text embedding:
+### Direction 1 — Cross-modal Alignment TTA — **implemented as `cma_continual` (150-round result: collapsed at ~R35)**
+Use frozen text embeddings as supervision. For top-K% confidence pixels, maximize cosine similarity between visual features and their predicted class text embedding:
 ```
-L_CMA = -Σ_{i ∈ S_conf} cos(v_i, t_{ĉ_i})
+L_CMA = -mean_{i ∈ S_conf} cos(v_i, t_{ĉ_i})
 ```
-Anti-collapse: text embeddings are geometrically diverse and fixed — no single trivial solution exists.
+**Experimental finding**: peaked at R16 (26.82 mIoU), then collapsed to 1.20 by R40. Text embedding diversity *delays* but does not *prevent* collapse. Root cause: any loss whose target depends on current model predictions has a confirmation bias feedback loop that eventually locks the model into predicting 1–2 dominant classes. See `docs/cma_continual_spec.md` §9 (post-mortem).
 
-### Direction 2 — Semantic Prototype Memory Bank (anti-forgetting)
-Per-class visual feature centroids initialized from source proxy. Pull features toward same-class prototypes (source = frozen anchor, target = EMA-updated).
+### Direction 2 — Semantic Prototype Memory Bank (anti-forgetting) — **implemented as `cma_proto_continual`**
+Per-class visual feature centroids. Two prototype sets: **source** (frozen forever, the confirmation-bias-immune anchor) and **target** (EMA-updated, slow adaptation). Combined loss with three cosine-alignment terms sharing the Top-K% mask:
+```
+L = λ_CMA · L_CMA(t_c)    + λ_src · L_src(p_src_c)   + λ_tgt · L_tgt(p_tgt_c)
+     text anchor            fixed source anchor        EMA target anchor
+```
+Source prototypes initialized via pseudo-labels on fog (source proxy) with cross-prompt agreement filter; classes with zero confident pixels fall back to text embedding. `λ_tgt = 0` degrades to pure source-anchor variant. See `docs/cma_proto_continual_spec.md` for full design.
 
-### Direction 3 — Pseudo-label Self-Training (ablation baseline)
+### Direction 3 — Pseudo-label Self-Training (ablation baseline) — *deferred*
 Replace entropy with cross-entropy against EMA teacher predictions. Directional loss with an explicit target — more stable than entropy but lacks the OVSS-specific text geometry signal.
 
 **DPCore (in progress)**: Instead of updating LayerNorm, learn visual prompt tokens. Maintain a coreset of (prompt, feature-stats) pairs — reuse nearest-match prompt for ID batches, learn a new prompt for OOD batches.
@@ -131,6 +139,8 @@ MLMP/
 │   ├── mlmp.py              # Episodic MLMP
 │   ├── mlmp_continual.py    # Naive continual MLMP (no reset, has continual_adapt() alias)
 │   ├── tent_continual.py    # Naive continual TENT (has continual_adapt() alias)
+│   ├── cma_continual.py     # CMA-continual: cross-modal alignment loss (Direction 1)
+│   ├── cma_proto_continual.py  # CMA + prototype bank (Direction 1+2, primary method)
 │   ├── cotta.py             # CoTTA with NA-CLIP backbone (open-vocab)
 │   ├── dpcore.py            # DPCore: visual prompt coreset (see below)
 │   ├── prompt_vit.py        # PromptVisualEncoder wrapper — injects learnable prompt tokens
@@ -191,7 +201,22 @@ if args.adapt:
 ```
 
 ### ACDC in `main_continual.py`
-No `CorruptTransform` added when `dataset == "ACDCDataset"`. Method-specific args added via `add_method_specific_args`: CoTTA uses `--mt/--rst/--ap/--aug_n`; DPCore uses `--temp_tau/--ema_alpha/--thr_rho/--prompt_num/--verbose_dpcore`.
+No `CorruptTransform` added when `dataset == "ACDCDataset"`. Method-specific args added via `add_method_specific_args`: CoTTA uses `--mt/--rst/--ap/--aug_n`; DPCore uses `--temp_tau/--ema_alpha/--thr_rho/--prompt_num/--verbose_dpcore`; CMA-continual uses `--top_k_percent`; CMA-Proto-continual uses `--top_k_percent/--lambda_cma/--lambda_src/--lambda_tgt/--ema_alpha/--src_conf_threshold/--src_max_samples` plus shared `--src_corruption` (defaults to `conditions[0]` if unset).
+
+### `adapt/cma_continual.py` — CMA Implementation Details
+- **Loss**: `-mean(cos(v_i, t_{c_i}))` over top-K% confidence pixels per batch. See `docs/cma_continual_spec.md` §2 for tensor mechanics.
+- **What's trained**: LayerNorm (γ, β) of visual encoder, identical to TENT/MLMP. Text encoder fully frozen.
+- **Pseudo-labels are no_grad**: `pred_cls` and `confidence` are computed under `torch.no_grad()` so the mask/target lookup doesn't backpropagate into the prediction itself; gradients flow only through `vis_feat`.
+- **Multi-prompt averaging**: Logits and text features are averaged over the 7 prompt templates before computing pseudo-labels and the alignment target. The averaged text vector is re-normalized to unit length (mean of unit vectors is not unit-norm).
+- **CLS token handling**: `image_features` returned by `model.forward()` has shape `(B, w*h+1, D)` with CLS at index 0. CMA loss uses `image_features[:, 1:, :]` to align with `logits` (which already drops CLS).
+
+### `adapt/cma_proto_continual.py` — CMA-Proto Implementation Details
+- **Three-term loss**: `L = λ_CMA · L_CMA + λ_src · L_src + λ_tgt · L_tgt`, all cosine-alignment, shared Top-K mask. See `docs/cma_proto_continual_spec.md` §3.
+- **Prototype init**: `obtain_src_prototypes(data_loader)` is called **once** before the stream begins (analogous to DPCore's `obtain_src_stat()`). Filters pixels by `confidence ≥ src_conf_threshold` AND cross-prompt agreement (all 7 templates predict same class); classes with zero pixels fall back to text embedding.
+- **Source prototype is frozen forever**: `self.p_src` never mutates after init — this is the anti-confirmation-bias anchor. Target prototype `self.p_tgt` is EMA-updated under `torch.no_grad()` inside the loss function.
+- **Source proxy for ACDC**: first condition (`fog`) by default; override via `--src_corruption`. Pseudo-label-only (no ground truth), matching realistic CTTA assumption.
+- **Pre-stream dispatch in `main_continual.py`**: mirrors DPCore's block — if `args.method == 'cma_proto_continual'`, build a source `prepare_data()` loader with `corruption=args.src_corruption or conditions[0]` and call `adapt_method.obtain_src_prototypes(src_loader)`.
+- **Degradation to simpler variants**: `λ_tgt=0` → source-anchor-only (hard Option A); `λ_src=λ_tgt=0` → equivalent to plain `cma_continual`.
 
 ### DPCore (`adapt/dpcore.py`) — Key Differences from Other Methods
 - **What's trained**: Visual prompt tokens (via `PromptVisualEncoder` wrapper in `adapt/prompt_vit.py`), NOT LayerNorm. Only `model.visual.prompts` has `requires_grad=True`.
@@ -215,6 +240,8 @@ No `CorruptTransform` added when `dataset == "ACDCDataset"`. Method-specific arg
 | `cotta.sh` | cotta | main_continual.py | mt=0.999, rst=0.01, ap=0.92, aug_n=32, LR=1e-5 |
 | `mlmp.sh` | mlmp (episodic) | main.py | LR=1e-3, steps=10, trials=1 |
 | `dpcore.sh` | dpcore | main_continual.py | LR=1e-5, steps=50, batch=16, thr_rho=0.95 |
+| `cma_continual.sh` | cma_continual | main_continual.py | LR=1e-5, steps=1, batch=1, top_k_percent=0.2 |
+| `cma_proto_continual.sh` | cma_proto_continual | main_continual.py | LR=1e-5, steps=1, batch=1, λ_cma=1.0, λ_src=1.0, λ_tgt=0.5, ema=0.999, src=fog |
 
 Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the script).
 

@@ -25,6 +25,8 @@ METHODS = [
     ("TENT-continual",  "tent_continual_lr_0.00001",         False),
     ("MLMP-continual",  "mlmp_continual_batch_1_LR_0.00001", False),
     ("CoTTA",           "cotta_batch_1",          False),
+    ("CMA-continual",   "cma_continual_step_1",  False),
+    ("CMA-Proto-continual", "cma_proto_continual_step_1", False),
     ("MLMP (episodic)", "mlmp_batch_1",           True),
 ]
 

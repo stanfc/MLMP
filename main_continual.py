@@ -120,6 +120,15 @@ def argparser():
         '--src_data_dir', type=str, default=None,
         help='Data root for src_dataset. Defaults to --data_dir.'
     )
+    parser.add_argument(
+        '--src_corruption', type=str, default=None,
+        help=(
+            'Corruption / condition key to use as source proxy for prototype '
+            'initialization (e.g., "fog" for ACDC, "original" for Cityscapes). '
+            'Used by cma_proto_continual; defaults to conditions_list[0] if unset. '
+            'DPCore has its own hardcoded default of "original".'
+        )
+    )
 
     # ----------------------------------------
     # Misc
@@ -177,6 +186,30 @@ def add_method_specific_args(parser, method):
     # --- TENT-Continual ---
     elif method == 'tent_continual':
         pass   # no extra args beyond base parser
+
+    # --- CMA-Continual (Cross-Modal Alignment, proposed) ---
+    elif method == 'cma_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Fraction of highest-confidence pixels per batch '
+                                 'that contribute to the CMA loss (default 0.2)')
+
+    # --- CMA-Proto-Continual (CMA + source/target prototype bank, proposed) ---
+    elif method == 'cma_proto_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Top-K%% confidence mask for the loss (default 0.2)')
+        parser.add_argument('--lambda_cma', type=float, default=1.0,
+                            help='Weight of text-alignment (CMA) term (default 1.0)')
+        parser.add_argument('--lambda_src', type=float, default=1.0,
+                            help='Weight of fixed source-prototype term (default 1.0)')
+        parser.add_argument('--lambda_tgt', type=float, default=0.5,
+                            help='Weight of EMA target-prototype term; set to 0 '
+                                 'to degrade to pure source-anchor variant (default 0.5)')
+        parser.add_argument('--ema_alpha', type=float, default=0.999,
+                            help='EMA momentum for target prototypes (default 0.999)')
+        parser.add_argument('--src_conf_threshold', type=float, default=0.5,
+                            help='Confidence threshold for source prototype init (default 0.5)')
+        parser.add_argument('--src_max_samples', type=int, default=5000,
+                            help='Max source images used for prototype init (default 5000)')
 
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
@@ -283,6 +316,28 @@ def main(args):
             shuffle=False
         )
         adapt_method.obtain_src_stat(src_loader)
+        del src_loader
+
+    # CMA-Proto-continual requires per-class source prototypes before adaptation.
+    # Unlike DPCore (unsupervised feature stats), the prototype bank groups visual
+    # features by CLIP pseudo-label. ACDC has no clean source, so by default we
+    # use the first condition (fog) as a source proxy — filters in
+    # obtain_src_prototypes (confidence + cross-prompt agreement) control noise.
+    if args.method == 'cma_proto_continual':
+        src_dataset    = args.src_dataset    or args.dataset
+        src_data_dir   = args.src_data_dir   or args.data_dir
+        src_corruption = args.src_corruption or conditions[0]
+
+        print(f"\n[CMA-Proto] Loading source proxy: "
+              f"dataset='{src_dataset}', corruption='{src_corruption}'")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False
+        )
+        adapt_method.obtain_src_prototypes(src_loader)
         del src_loader
 
     all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}

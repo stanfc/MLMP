@@ -12,6 +12,8 @@ from .dpcore import DPCore
 # Continual TTA (no reset, state persists across stream)
 from .mlmp_continual import MLMPContinual
 from .tent_continual import TENTContinual
+from .cma_continual import CMAContinual
+from .cma_proto_continual import CMAProtoContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -26,6 +28,10 @@ METHOD_CLASSES = {
     # Continual TTA (naive: no reset)
     'mlmp_continual': MLMPContinual,
     'tent_continual': TENTContinual,
+    # Continual TTA with cross-modal alignment loss (proposed Direction 1)
+    'cma_continual': CMAContinual,
+    # Continual TTA with CMA + source/target prototype memory bank (proposed D1+D2)
+    'cma_proto_continual': CMAProtoContinual,
 }
 
 
