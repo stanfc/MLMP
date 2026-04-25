@@ -14,6 +14,7 @@ from .mlmp_continual import MLMPContinual
 from .tent_continual import TENTContinual
 from .cma_continual import CMAContinual
 from .cma_proto_continual import CMAProtoContinual
+from .cma_layered_continual import CMALayeredContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -32,6 +33,8 @@ METHOD_CLASSES = {
     'cma_continual': CMAContinual,
     # Continual TTA with CMA + source/target prototype memory bank (proposed D1+D2)
     'cma_proto_continual': CMAProtoContinual,
+    # Continual TTA with CMA + layer-stratified stochastic restoration (Direction A)
+    'cma_layered_continual': CMALayeredContinual,
 }
 
 

@@ -27,6 +27,7 @@ METHODS = [
     ("CoTTA",           "cotta_batch_1",          False),
     ("CMA-continual",   "cma_continual_step_1",  False),
     ("CMA-Proto-continual", "cma_proto_continual_step_1", False),
+    ("CMA-Layered-continual", "cma_layered_continual_step_1", False),
     ("MLMP (episodic)", "mlmp_batch_1",           True),
 ]
 

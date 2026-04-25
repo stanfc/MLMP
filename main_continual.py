@@ -211,6 +211,25 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--src_max_samples', type=int, default=5000,
                             help='Max source images used for prototype init (default 5000)')
 
+    # --- CMA-Layered-Continual (CMA + layer-stratified restoration, Direction A) ---
+    elif method == 'cma_layered_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Top-K%% confidence mask for the CMA loss (default 0.2)')
+        parser.add_argument('--early_rst', type=float, default=0.001,
+                            help='Stochastic restore probability for early blocks '
+                                 '([0, early_cutoff) and ln_pre) (default 0.001)')
+        parser.add_argument('--mid_rst', type=float, default=0.01,
+                            help='Stochastic restore probability for mid blocks '
+                                 '([early_cutoff, late_cutoff)) (default 0.01)')
+        parser.add_argument('--late_rst', type=float, default=0.05,
+                            help='Stochastic restore probability for late blocks '
+                                 '([late_cutoff, num_blocks) and ln_post) (default 0.05)')
+        parser.add_argument('--early_cutoff', type=int, default=8,
+                            help='Block index boundary: blocks [0, early_cutoff) are early')
+        parser.add_argument('--late_cutoff', type=int, default=16,
+                            help='Block index boundary: blocks [early_cutoff, late_cutoff) are mid; '
+                                 '[late_cutoff, num_blocks) are late')
+
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
