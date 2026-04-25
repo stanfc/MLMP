@@ -230,6 +230,22 @@ def add_method_specific_args(parser, method):
                             help='Block index boundary: blocks [early_cutoff, late_cutoff) are mid; '
                                  '[late_cutoff, num_blocks) are late')
 
+    # --- CMA-DivGate-Continual (CMA + diversity gate, Direction B) ---
+    elif method == 'cma_divgate_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Top-K%% confidence mask for the CMA loss (default 0.2)')
+        parser.add_argument('--h_threshold', type=float, default=1.8,
+                            help='H_margin >= this -> aggressive mode (rst=0)')
+        parser.add_argument('--h_warning', type=float, default=1.2,
+                            help='h_warning <= H_margin < h_threshold -> cautious; '
+                                 '< h_warning -> brake')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+        parser.add_argument('--cautious_rst', type=float, default=0.005,
+                            help='Stochastic restore probability in cautious mode')
+        parser.add_argument('--brake_rst', type=float, default=0.05,
+                            help='Stochastic restore probability in brake mode')
+
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
