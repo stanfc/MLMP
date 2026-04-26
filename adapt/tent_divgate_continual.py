@@ -1,3 +1,4 @@
+import os
 import time
 import copy
 
@@ -40,6 +41,7 @@ class TENTDivGateContinual:
                  monitor_interval=50,
                  cautious_rst=0.005, brake_rst=0.05,
                  prompt_dir=None,
+                 save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
         self.ovss_backbone = ovss_backbone
@@ -113,6 +115,24 @@ class TENTDivGateContinual:
         self.total_batches = 0
         self.current_mode = MODE_AGGRESSIVE
         self.current_rst = 0.0
+
+        # ---------- Optional per-monitor file log ----------
+        # If save_dir is provided (auto-injected by main_continual.py via
+        # inspect-based dispatch), write H_margin trajectory to
+        # {save_dir}/divgate_log.txt -- one row per _update_mode() call.
+        # Format: total_batches,h_margin,mode  (CSV, '#'-prefixed header).
+        self.log_path = None
+        if save_dir is not None:
+            try:
+                os.makedirs(save_dir, exist_ok=True)
+                self.log_path = os.path.join(save_dir, 'divgate_log.txt')
+                with open(self.log_path, 'w') as f:
+                    f.write("# DivGate log: per-monitor H_margin and mode\n")
+                    f.write("total_batches,h_margin,mode\n")
+                print(f"+++ DivGate log -> {self.log_path}")
+            except OSError as e:
+                print(f"+++ DivGate log disabled (could not open {save_dir}): {e}")
+                self.log_path = None
 
         if self.runtime:
             self.adapt_times = []
@@ -212,6 +232,13 @@ class TENTDivGateContinual:
                   f"{self.current_mode} -> {new_mode}")
         self.current_mode = new_mode
         self.current_rst = self._mode_to_rst(new_mode)
+
+        if self.log_path is not None:
+            try:
+                with open(self.log_path, 'a') as f:
+                    f.write(f"{self.total_batches},{h_margin:.6f},{self.current_mode}\n")
+            except OSError:
+                pass
 
         self.marginal_buf.clear()
         self.batch_count = 0
