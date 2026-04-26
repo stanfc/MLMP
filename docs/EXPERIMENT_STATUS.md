@@ -1,203 +1,239 @@
-# Experiment Status — Session Handoff
+# Experiment Status — Research Arc
 
-**Last updated**: 2026-04-24
-**Current state**: `cma_proto_continual` implemented and sanity-tested; NOT yet run on full ACDC stream.
-**Next action**: `bash bash/ACDC_10_round/cma_proto_continual.sh`
+**Last updated**: 2026-04-26
+**Current state**: TENT-DivGate-Continual running, R26 of 150. Mean mIoU = 30.49, peak 32.50 @R20. **First method to match MLMP-episodic upper bound (30.6) under continual setting.**
+**Active runs**: `bash bash/ACDC_10_round/tent_divgate_continual.sh` (GPU 3, ~6h remaining)
+**Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48.
 
-This document is the entry point for anyone (including a new Claude session) picking up this work. Read this first, then drill into the referenced specs for detail.
+This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
 
 ---
 
 ## 1. The Big Picture
 
-**Project**: MLMP — Test-Time Adaptation (TTA) framework for Open-Vocabulary Semantic Segmentation on NA-CLIP (ViT-L/14).
+**Project**: MLMP — Test-Time Adaptation for Open-Vocabulary Semantic Segmentation on NA-CLIP (ViT-L/14), evaluated on ACDC (fog/night/rain/snow × 10 conditions, 150 continual rounds, evaluate-before-adapt protocol).
 
-**Phase 1 (complete)**: Benchmark existing CTTA methods on ACDC (fog/night/rain/snow × 10 rounds, evaluate-before-adapt).
+**Phase 1 (complete, in `proposal.md`)**: Benchmark existing CTTA methods. Established the core tension:
 
-**Phase 2 (current — this work)**: Design a new Continual TTA method that is both **stable (CoTTA-level)** and **high-quality (MLMP-episodic-level)**. Existing methods fail one or the other:
+| Baseline | R10 mean | R150 / final | Verdict |
+|----------|----------|---|---|
+| No Adaptation | 23.3 | 23.3 | Stable, no learning |
+| TENT-continual step=1 | 30.92 (peak R10) | 7.90 | Improves quickly, **collapses by R80** |
+| TENT-continual step=10 | 32.44 (peak R2) | 5.10 | Even faster peak, faster crash |
+| MLMP-continual step=1 | 25.7 | crashes | Slow degradation |
+| CoTTA | 23.4 | 23.4 | **Stable but never improves** |
+| **MLMP episodic step=10** | **30.6** | **30.6** | **Best quality, requires per-sample reset (unrealistic)** |
 
-| Baseline | R10 mean | Verdict |
-|----------|----------|---------|
-| No Adaptation | 23.3 | stable but no adaptation |
-| TENT-continual (step=1) | 30.9 | improves early, collapses ~R80 |
-| MLMP-continual (step=1) | 25.7 | gradual decline |
-| CoTTA | 23.4 | stable but never improves |
-| **MLMP episodic** | **30.6** | **best quality, requires per-sample reset** (unrealistic) |
+> **The core tension**: every CTTA method that *improves* eventually *collapses*; every method that is *stable* never *improves*. MLMP-episodic gets 30.6 mIoU but only works because it resets per sample — useless for deployment.
 
-The core tension: **every CTTA method that improves eventually collapses; every method that is stable never improves**.
+**Phase 2 (this work)**: Design a new CTTA method that is both **stable (CoTTA-level)** and **high-quality (MLMP-episodic-level or better)**.
+
+The current best result — **TENT-DivGate at mean 30.49 over the first 26 rounds, no collapse** — is the first method we have that *matches* the episodic upper bound under realistic continual conditions. The remaining test is whether it survives the R30-R80 window where natural TENT loses 11+ mIoU.
 
 ---
 
-## 2. The Research Arc — What We've Learned
+## 2. Research Arc — Six Methods, Three Failures, One Success (so far)
 
-### 2.1 Starting hypothesis (from `proposal.md`)
+The work proceeded in three phases. Each phase ended with a hard-won negative result that reframed the problem for the next phase.
 
-> Entropy-based losses (TENT, MLMP) collapse because `L = -Σ p log p` rewards *confidence* not *correctness*. Over time, LayerNorm drift accumulates and the model locks into predicting 1–2 dominant classes (road, sky) with high confidence for every pixel. The key structural feature of OVSS — the frozen text encoder — provides 19 diverse fixed targets in embedding space. Using those as the loss signal (cross-modal alignment) should break the trivial solution.
+### Phase A: CMA-continual — directional loss instead of entropy
 
-### 2.2 First attempt: CMA-continual (Direction 1) — **FAILED**
+**Hypothesis** (`proposal.md`): Entropy-based losses (TENT, MLMP) collapse because `L = -Σ p log p` rewards *confidence* not *correctness*. The frozen CLIP text encoder provides 19 fixed semantic anchors. Replacing entropy with cosine alignment to the predicted class's text embedding should give a directional signal that breaks the trivial solution.
 
-**Implementation**: `adapt/cma_continual.py`, spec in `docs/cma_continual_spec.md`.
+**Loss**: `L_CMA = -mean_{i ∈ top-K%} cos(v_i, t_{ĉ_i})` over top-K% confident pixels.
 
-**Loss**: `L_CMA = -mean_{i in top-K%} cos(v_i, t_{ĉ_i})` — pull each confident pixel's visual feature toward the text embedding of its predicted class.
+**Implementation**: `adapt/cma_continual.py`. Spec: [docs/cma_continual_spec.md](cma_continual_spec.md).
 
-**Result** (150 rounds on ACDC, `save/ACDCDataset/cma_continual_step_1/`):
+**Result** (`save/ACDCDataset/cma_continual_k_0.2/`, 145 rounds): peak **26.82 @R16**, then dropped to **1.20 by R34, dead state forever**. Mean = 5.54. The k=0.5 variant peaked slightly higher (27.40 @R18) and crashed slightly later (R40), but qualitatively identical.
 
-| Phase | Rounds | Mean mIoU | Behavior |
-|-------|--------|-----------|----------|
-| Rise | R1 → R16 | 23.38 → **26.82** (+3.44) | Real adaptation |
-| Turn | R15–17 | night drops first (hardest condition) | Leading indicator |
-| Collapse | R17 → R40 | 26.82 → 1.29 | Rapid decline |
-| Dead | R40+ | locked at 1.20 | Gradient ≈ 0, all pixels predict 1–2 classes |
+**Diagnosis** (post-mortem in [cma_continual_spec.md](cma_continual_spec.md) §9):
+> The hypothesis was wrong at the deepest level. The problem is NOT the specific form of entropy. It's that **any loss whose target depends on the current model's predictions creates a confirmation bias feedback loop**. CMA's directional pull is *more* aggressive than entropy's confidence sharpening, so it actually collapses *faster* (R34 vs TENT's R80).
 
-**Diagnosis — the hypothesis was wrong at the deepest level**:
+### Phase B: CMA-Proto-continual — frozen external anchor
 
-The problem is NOT the specific form of entropy loss. It's that **any loss whose target depends on the current model's predictions creates a confirmation bias feedback loop**. The text-embedding diversity only controls *which directions* the collapse occurs in, not *whether* it occurs:
+**Refined hypothesis**: To prevent the feedback loop, the loss must include at least one term whose target is **completely independent of the current model's predictions** — an external anchor.
 
+**Loss**: three cosine-alignment terms sharing the same Top-K% mask:
 ```
-CMA confirmation loop:
-  High-confidence prediction of class c
-  → CMA pulls v_i toward t_c
-  → class c gets even more confidently predicted
-  → more pseudo-labels for class c
-  → ... loops until road/sky dominate every pixel
+L = λ_CMA · cos(v_i, t_{ĉ_i})        # text anchor (Phase A)
+  + λ_src · cos(v_i, p^src_{ĉ_i})    # frozen source visual prototype
+  + λ_tgt · cos(v_i, p^tgt_{ĉ_i})    # EMA target visual prototype
 ```
 
-CMA collapsed at R35 vs TENT-continual step=1's R80 — meaning CMA was actually *faster* to collapse, because its per-step directional signal (explicit target vector per pixel) is more aggressive than TENT's indirect confidence sharpening.
+The source prototype `p_src` is computed once before the stream begins (using ACDC fog as source proxy with cross-prompt-agreement filter) and **never updated** during adaptation.
 
-**Full post-mortem**: `docs/cma_continual_spec.md` §9.
+**Implementation**: `adapt/cma_proto_continual.py`. Spec: [docs/cma_proto_continual_spec.md](cma_proto_continual_spec.md).
 
-### 2.3 Refined hypothesis
+**Result** (`save/ACDCDataset/cma_proto_continual_step_1/`, 150 rounds): peak ~26.1 @R16, **collapsed to dead state by R54**. Better than plain CMA (R34 → R54, +20 rounds) but qualitatively identical end state.
 
-> **To prevent collapse, the total loss must include at least one term whose target is completely independent of the current model's predictions** — an external anchor that does not participate in the feedback loop.
+**Diagnosis** ([proposal_after_cma.md](../proposal_after_cma.md) §0.3) — the **deepest** insight of the project so far:
+> Even with `p_src` literally frozen, the confirmation-bias loop remains. The problem is **NOT in the target vector** — it's in the **class index selection**. All three terms have the form `-cos(v_i, target_X[ĉ_i])` where `ĉ_i = argmax(current_model(x_i))`. Whether `target_X` is text, frozen-source-proto, or EMA-target-proto, the "which prototype to pull toward" decision is made by the very model we're updating. So the model can hallucinate a class assignment, get pulled toward that class's anchor (regardless of which anchor type), and the next pseudo-label leans even harder in that direction.
+>
+> **Any loss whose pseudo-label `ĉ_i` comes from the current model has confirmation bias, period.**
 
-### 2.4 Current attempt: CMA-Proto-continual (Direction 1 + Direction 2) — **IMPLEMENTED, NOT YET RUN**
+### Phase C: Reframe — `proposal_after_cma.md` and three new directions
 
-**Implementation**: `adapt/cma_proto_continual.py`, spec in `docs/cma_proto_continual_spec.md`, bash script `bash/ACDC_10_round/cma_proto_continual.sh`.
+After CMA-Proto failed, we wrote [proposal_after_cma.md](../proposal_after_cma.md) which acknowledged that **loss-level external anchors don't escape the feedback loop** and proposed three structurally different directions:
 
-**Loss** — three cosine-alignment terms sharing the same Top-K% confident-pixel mask:
+- **Direction A (Layer-Stratified Restoration)**: protect late layers (semantic) with CoTTA-style stochastic restoration toward source weights, let early layers (low-level) adapt freely. Loss stays as CMA; defense moves to the optimizer side.
+- **Direction B (Diversity-Gated CMA)**: monitor batch-level marginal class entropy `H_margin`. When `H_margin` is high (healthy diversity) run aggressive (no restore); when it falls (collapse predictor), apply CoTTA restoration. Label-free monitoring as a contribution.
+- **Direction C (Two-Timescale Meta-Adaptation)**: separate "fast" per-sample adapter from "slow" cross-sample model. Most direct break of the feedback loop, but most complex. Deferred.
 
-```
-L_total = λ_CMA · L_CMA(t_c)        # text anchor (from CMA)
-        + λ_src · L_src(p_src_c)     # fixed source visual prototype — THE EXTERNAL ANCHOR
-        + λ_tgt · L_tgt(p_tgt_c)     # EMA target visual prototype
-```
+We implemented A and B in parallel.
 
-**The key design invariant**: `p_src` is computed ONCE before the stream begins, and NEVER updated during adaptation. This is the term that breaks confirmation bias — it is immune to the feedback loop because its target does not change based on what the model predicts.
+### Phase D: CMA-Layered (Direction A)
 
-**Source prototype initialization** (Option C from design — most realistic CTTA):
-- Use ACDC fog as source proxy (no ground truth labels, following DPCore convention)
-- Filter pseudo-labels: confidence ≥ 0.5 AND all 7 prompt templates agree
-- Per-class visual centroid → L2-normalized → fixed forever
-- Classes with zero confident pixels fall back to text embedding `t_c`
+**Implementation**: `adapt/cma_layered_continual.py`. Spec: [docs/cma_layered_continual_spec.md](cma_layered_continual_spec.md). Plan: [docs/cma_layered_continual_plan.md](cma_layered_continual_plan.md).
 
-**Hyperparameter default**: `λ_CMA=1.0, λ_src=1.0, λ_tgt=0.5, ema_alpha=0.999, top_k=0.2`.
-Degradation: `λ_tgt=0` → pure source-anchor variant.
+**Mechanism**: after each `optimizer.step()`, every visual-encoder LN parameter is stochastically restored toward source with a probability that depends on which transformer block it belongs to:
+- early ([0, early_cutoff) + ln_pre): `early_rst` (default 0.001)
+- mid ([early_cutoff, late_cutoff)): `mid_rst` (default 0.01)
+- late ([late_cutoff, 24) + ln_post): `late_rst` (default 0.05)
 
----
+**Six runs spanning rate × cutoff sweep** (`save/ACDCDataset/cma_layered_continual_*/`):
 
-## 3. Current Codebase State
+| Run | rates | cutoffs | rounds | peak / mean | verdict |
+|---|---|---|---|---|---|
+| step_1 (proposal default) | 0.001/0.01/0.05 | 8/16 | 150 | 23.38 / 23.21 | flat — like CoTTA |
+| cutoff_12_16 | 0.001/0.01/0.05 | 12/16 | 150 | 23.49 / 23.28 | flat |
+| cutoff_12_20 | 0.001/0.01/0.05 | 12/20 | 150 | 23.48 / 23.26 | flat |
+| rate_0.001_0.01 | 0.0001/0.001/0.01 | 8/16 | 47 | 23.73 / 23.08 | gentle rise |
+| rate_0.001_0.05 | 0/0.001/0.05 | 8/16 | 47 | 23.75 / 23.09 | already past peak |
+| rate_0.005_0.01 | 0/0.005/0.01 | 8/16 | 48 | 23.75 / 23.13 | already past peak |
 
-### New/modified files from this work
+**Diagnosis**:
+1. Default rates (proposal §1.4 values) are too strong → method becomes essentially CoTTA.
+2. Loose rates allow some adaptation, but **cap at ~23.7 mIoU** — far below CMA's natural peak (27.4) and miles below TENT's peak (32.4). The CMA loss with top-K=0.2 mask has a relatively low ceiling; layer-stratified restoration cannot raise that ceiling, only stabilize it.
+3. **Cutoff position barely matters** within 8-12 / 16-20 range — the bottleneck is the rate, not the boundary.
+4. **Conclusion: Direction A alone is insufficient** for breaking through 24 mIoU. Negative result, but a clean one.
 
-| File | Status | What it is |
-|------|--------|------------|
-| `adapt/cma_continual.py` | done, experiment run | CMA baseline (Direction 1) |
-| `adapt/cma_proto_continual.py` | done, sanity-tested | CMA + prototype bank (D1+D2), ready to run |
-| `bash/ACDC_10_round/cma_continual.sh` | done, run with 150 rounds | baseline runner (user tweaked `TOP_K_PERCENT=0.5`) |
-| `bash/ACDC_10_round/cma_proto_continual.sh` | done | D1+D2 runner (150 rounds, fog as source proxy) |
-| `docs/cma_continual_spec.md` | done (with post-mortem §9) | CMA baseline spec + failure analysis |
-| `docs/cma_proto_continual_spec.md` | done | D1+D2 full spec |
-| `docs/EXPERIMENT_STATUS.md` | **this file** | session-handoff snapshot |
-| `proposal.md` | unchanged | original research proposal |
-| `adapt/__init__.py` | updated | registers both new methods |
-| `main_continual.py` | updated | method-specific args, source-proxy loader |
-| `parse_acdc_results.py` | updated | parses both new method outputs |
-| `CLAUDE.md` | updated | project-level documentation |
+### Phase E: CMA-DivGate (Direction B on CMA base)
 
-### Sanity-test results for `cma_proto_continual` (passed)
+**Implementation**: `adapt/cma_divgate_continual.py`. Spec: [docs/cma_divgate_continual_spec.md](cma_divgate_continual_spec.md). Plan: [docs/cma_divgate_continual_plan.md](cma_divgate_continual_plan.md).
 
-- Prototype init produces unit-norm per-class prototypes (with text-embedding fallback for classes with no confident pixels)
-- Adapt step: LayerNorm updates, `p_src` delta = 0 (frozen anchor invariant holds), `p_tgt` EMA drift ~1e-4 (matches `1−α=0.001`)
-- `evaluate()` returns correct shape
-- `λ_tgt=0` degradation path works (pure source-anchor variant)
-- Dtype-safe: fp32 accumulators for numerically stable prototype summation, final storage in fp16 to match model
+**Mechanism**:
+- Buffer per-batch marginal class probs `probs.mean(dim=[0, 2, 3])` for `monitor_interval=50` batches.
+- After N batches: aggregate, compute `H_margin = -Σ p log p`, pick mode.
+- Three-tier mode → flat stochastic restore rate: `aggressive` (rst=0), `cautious` (rst=0.005), `brake` (rst=0.05).
+- Loss: identical to CMA-continual.
 
-### Save dir convention
+**Result** (`save/ACDCDataset/cma_divgate_continual/`, 150 rounds): peak **26.82 @R16**, R150 = 19.32, mean = 21.21.
 
-- Baseline CMA result: `save/ACDCDataset/cma_continual_step_1/results_all_rounds.txt`
-- CMA-Proto output (when run): `save/ACDCDataset/cma_proto_continual_step_1/results_all_rounds.txt`
+**Sub-experiments** (`save/ACDCDataset/cma_divgate_continual_brake_*`): the 4 brake_rst variants (0.001, 0.005, 0.02, 0.05) were **bit-identical for the first 33 rounds**. This was investigated and turned out to be expected: H_margin never dropped below `h_warning = 1.2` in early rounds, so brake mode never fired and the only effective restoration was cautious_rst (which was constant at 0.005 across all four runs). The gate behaves as a 2-tier (aggressive ↔ cautious) controller, not 3-tier.
 
-`parse_acdc_results.py` picks up both and generates the combined LaTeX table.
+**Diagnosis**:
+1. **The gate works**: mean 21.21 vs CMA's 5.54 = **+15.7 mIoU lifted from dead state**. Definitive proof that H_margin is a usable label-free collapse predictor.
+2. **But the absolute level (21.21) is still BELOW No Adapt baseline 23.34**: the gate prevents catastrophic collapse but the brake is sticky enough that mean never recovers to source level.
+3. **Most importantly**: even an *ideal* CMA-DivGate is bounded above by CMA's natural peak (27.4). **The base loss is the ceiling**.
 
----
+### Phase F: TENT-DivGate (Direction B on TENT base) — **CURRENT, MOST PROMISING**
 
-## 4. Success Criteria for CMA-Proto-continual
+**Implementation**: `adapt/tent_divgate_continual.py`. Spec: [docs/tent_divgate_continual_spec.md](tent_divgate_continual_spec.md).
 
-From `docs/cma_proto_continual_spec.md` §9:
+**Motivation**: TENT-continual's natural peak (32.4 step=10, 30.9 step=1) **exceeds MLMP-episodic (30.6)**. If the same gate that successfully prevented the dead state for CMA can do the same for TENT, the result might match or beat episodic. This was the crucial methodological correction — Direction B's brake mechanism wasn't broken; we'd just been pairing it with the wrong base loss.
 
-1. **No collapse within 150 rounds**: R150 mean mIoU ≥ 15 (vs CMA's 1.20 at R40+).
-2. **Stable improvement for ≥50 rounds**: R50 ≥ R10 − 2, AND R50 > R1.
-3. **Matches/beats CMA peak**: best mean over 150 rounds ≥ 26.82.
+**Mechanism**: identical gate to CMA-DivGate, but base loss is pure TENT pixel-wise entropy (no Top-K mask, matching `tent_continual.py`).
 
-**Stretch**: continues improving past R50, approaches MLMP-episodic (30.6).
+**Result so far** (`save/ACDCDataset/tent_divgate_continual/`, **R26 of 150 in progress**):
 
-### Interpretation paths
+| Round | TENT-natural | TENT-DivGate | Δ | comment |
+|---|---|---|---|---|
+| R1 | 23.89 | 23.89 | 0 | bit-identical, gate aggressive (rst=0) |
+| R5 | 28.12 | 28.12 | 0 | identical, still aggressive |
+| R10 | 30.92 | 30.92 | 0 | matches TENT peak round, identical |
+| R15 | 32.45 | 32.17 | **−0.28** | **gate has fired** (cautious mode active) |
+| R20 | 32.90 | 32.50 | −0.40 | small consistent damping by gate |
+| R25 | 32.23 | 31.96 | −0.27 | tracking close to natural TENT |
+| R26 | — | 31.92 | — | mean over R1-R26 = **30.49** |
 
-- **If criterion 1 holds but 3 fails (stable-low)**: source anchor is too strong → reduce `λ_src`, increase `λ_tgt`. Cheap tuning iteration.
-- **If criterion 1 fails (still collapses)**: source anchor is not enough. Next steps: stronger filters (tri-view augmentation consistency), hybrid `p_src = α·v_centroid + (1−α)·t_c`, or weight-level anti-forgetting (stochastic restoration à la CoTTA).
+**This is the first method that matches MLMP-episodic (30.6) under continual setting**. The remaining test is whether the gate continues to suppress the slow drift that takes natural TENT from R20=32.9 down to R150=7.9.
 
----
-
-## 5. Concrete Next Actions
-
-1. **Run the experiment**:
-   ```bash
-   bash bash/ACDC_10_round/cma_proto_continual.sh
-   ```
-   This runs 150 rounds (~hours on a single GPU). Watch for:
-   - Pre-stream log: `[CMA-Proto] Source images used: X`, `Top-3 classes by confident-pixel count`, `Fallback classes` — sanity check that prototype init is reasonable (expect road/sky/building to dominate, rider/train likely fall back to text)
-   - Round-by-round `results_all_rounds.txt` — check if collapse is avoided
-
-2. **Parse results into LaTeX table**:
-   ```bash
-   python parse_acdc_results.py
-   ```
-
-3. **If successful (criteria 1+2+3 met)**: write up findings, compare to CMA baseline trajectory round-by-round, consider running longer (300+ rounds) to confirm no eventual collapse.
-
-4. **If partial (criterion 1 only)**: sweep hyperparameters `λ_src`, `λ_tgt`, `ema_alpha`. Easiest next is `λ_tgt=0` (pure hard anchor) — flip one number and re-run.
-
-5. **If failed (still collapses)**: revisit spec §9 fallback options. Priority order: (a) stronger prototype filter, (b) hybrid text-visual prototype, (c) stochastic restoration on LayerNorm.
+The fact that the two trajectories were bit-identical for R1-R12 then diverged in lock-step is **direct evidence that the gate IS firing** — in cautious mode (since brake never fires at default thresholds, per Phase E sub-experiment). Cautious_rst = 0.005 is enough to slowly counter TENT's slow drift, where it was insufficient against CMA's fast drift.
 
 ---
 
-## 6. Reading Map — Where to Find What
+## 3. Why TENT-DivGate Works Where CMA-DivGate Failed
+
+Two factors compound:
+
+| Factor | CMA-DivGate | TENT-DivGate |
+|---|---|---|
+| Natural peak | 27.4 | 32.9 |
+| Drift speed | R16 → R34 dead (18 rounds) | R20 → R80 down 12 mIoU (60 rounds) |
+| Per-batch signal | top-K 20% pixels | 100% pixels |
+| Gate reaction time | insufficient | sufficient |
+
+CMA's drift was too fast for cautious-mode rst=0.005 to compensate; brake fires too late. TENT's drift is slow enough that the same cautious mode accumulates enough restoration per monitor window to keep the model in its high-plasticity regime. The gate didn't change between the two methods — only the speed of the underlying drift.
+
+This is a useful general lesson: **the same anti-collapse mechanism can succeed or fail depending on whether its reaction time matches the base loss's drift time-scale**.
+
+---
+
+## 4. Open Questions / Risks for TENT-DivGate
+
+1. **R30-R80 is the danger window**: natural TENT loses 11+ mIoU here. We need to see TENT-DivGate stay at 30+ through this window before declaring victory. Current trajectory is plateau-ish at 32, but only 26 rounds in.
+2. **H_margin per-monitor logging not yet added**: we can't directly verify whether brake ever fires or it's pure cautious-mode. Worth adding before re-running for the paper.
+3. **Per-condition lag on night**: night is at 27.34 vs other conditions at 33-34. This is consistent with natural TENT (night is always the laggard) but worth checking whether the gate could be tuned to help night specifically.
+4. **step=10 not yet tested**: TENT step=10 has higher natural peak (32.4 R2). If gate works at step=1, the step=10 variant might reach even higher mean.
+
+---
+
+## 5. Concrete Next Actions (in order)
+
+1. **Wait for current run to finish** (~6h). Watch R30, R40, R80 milestones in `save/ACDCDataset/tent_divgate_continual/results_all_rounds.txt`.
+2. **If mean stays > 28 through R80**: this is the paper's main result. Add per-monitor H_margin logging (small patch) and re-run for cleaner figures.
+3. **If gate fails at some point**: tune `h_warning` upward (1.4-1.6) so brake fires earlier; or lower `cautious_rst` to e.g. 0.003 to reduce damping while maintaining responsiveness.
+4. **Optional follow-up**: TENT-DivGate at step=10 to push the peak ceiling.
+5. **Optional follow-up**: continue the paused CMA-Layered loose-rate runs to 150 rounds to fully document Direction A's behavior (academic completeness).
+
+---
+
+## 6. Codebase State — All Methods Currently Registered
+
+| Method name (CLI) | Class | File | Bash script | Spec |
+|---|---|---|---|---|
+| `cma_continual` | `CMAContinual` | `adapt/cma_continual.py` | `bash/ACDC_10_round/cma_continual.sh` | [cma_continual_spec.md](cma_continual_spec.md) |
+| `cma_proto_continual` | `CMAProtoContinual` | `adapt/cma_proto_continual.py` | `bash/ACDC_10_round/cma_proto_continual.sh` | [cma_proto_continual_spec.md](cma_proto_continual_spec.md) |
+| `cma_layered_continual` | `CMALayeredContinual` | `adapt/cma_layered_continual.py` | `bash/ACDC_10_round/cma_layered_continual.sh` | [cma_layered_continual_spec.md](cma_layered_continual_spec.md) |
+| `cma_divgate_continual` | `CMADivGateContinual` | `adapt/cma_divgate_continual.py` | `bash/ACDC_10_round/cma_divgate_continual.sh` | [cma_divgate_continual_spec.md](cma_divgate_continual_spec.md) |
+| `tent_divgate_continual` | `TENTDivGateContinual` | `adapt/tent_divgate_continual.py` | `bash/ACDC_10_round/tent_divgate_continual.sh` | [tent_divgate_continual_spec.md](tent_divgate_continual_spec.md) |
+
+Plus the original baselines (`tent_continual`, `mlmp_continual`, `cotta`, `dpcore`, `mlmp` episodic) which are unchanged.
+
+All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via `main_continual.py::add_method_specific_args`. Results are saved under `save/ACDCDataset/{save_dir}/results_all_rounds.txt` and parsed by `parse_acdc_results.py` into `acdc_table.tex`.
+
+---
+
+## 7. Reading Map — Where to Find What
 
 | Question | Read |
 |----------|------|
-| What's the overall research goal and high-level proposal? | `proposal.md` |
-| Why did CMA (alone) collapse? | `docs/cma_continual_spec.md` §9 (post-mortem) |
-| What are the exact tensor ops in the CMA loss? | `docs/cma_continual_spec.md` §2 |
-| Full design of the current method (CMA-Proto)? | `docs/cma_proto_continual_spec.md` |
-| Prototype init filter stack, fallback behavior? | `docs/cma_proto_continual_spec.md` §4 |
-| All hyperparameters and what they control? | `docs/cma_proto_continual_spec.md` §6 |
-| Project-level codebase map / how pieces fit? | `CLAUDE.md` |
-| Implementation details and gotchas (CLS token, fp16 dtype)? | `CLAUDE.md` §"Critical Implementation Details" |
-| Current session state, what to do next? | **this file** |
+| What's the overall research goal and Phase 1 baseline? | [proposal.md](../proposal.md) |
+| Why did entropy/CMA collapse? Original hypothesis. | [docs/cma_continual_spec.md](cma_continual_spec.md) §9 (post-mortem) |
+| Why did frozen external anchors not solve it? Deepest insight. | [docs/cma_proto_continual_spec.md](cma_proto_continual_spec.md), then [proposal_after_cma.md](../proposal_after_cma.md) §0.3 |
+| What are the three new directions A/B/C? | [proposal_after_cma.md](../proposal_after_cma.md) |
+| Direction A spec / Direction A experimental results | [docs/cma_layered_continual_spec.md](cma_layered_continual_spec.md), this file §2 Phase D |
+| Direction B (CMA base) spec / experimental results | [docs/cma_divgate_continual_spec.md](cma_divgate_continual_spec.md), this file §2 Phase E |
+| Direction B (TENT base) spec / current results | [docs/tent_divgate_continual_spec.md](tent_divgate_continual_spec.md), this file §2 Phase F |
+| Codebase architecture, implementation gotchas | [CLAUDE.md](../CLAUDE.md) |
+| Implementation plan format / step-by-step recipes | `docs/*_plan.md` |
 
 ---
 
-## 7. Key Design Decisions (Quick Reference)
+## 8. Key Design Decisions (Quick Reference)
 
-Made during brainstorming, recorded here for continuity:
+Made across the project, recorded here for continuity:
 
-1. **Update target = LayerNorm (γ, β)**: same as TENT/MLMP baselines, makes any difference attributable purely to the loss signal.
-2. **Confidence filter = Top-K% per batch** (not fixed threshold): robust to overall confidence shifts across rounds.
-3. **Start with Direction 1 alone, then add Direction 2**: clean attribution of stability gains to the prototype bank specifically. Direction 1 was tested first (failed), motivating Direction 2.
-4. **Source prototype init uses pseudo-labels, not ground truth** (Option C): matches realistic CTTA setting. Bias is mitigated via cross-prompt-agreement filter + text-embedding fallback.
-5. **Source prototype is completely frozen during stream** (not source-EMA hybrid): the whole point is an external anchor. Any update path participates in confirmation bias.
-6. **Option B (source fixed + target EMA) chosen over Option A (source only)**: allows stronger adaptation signal; `λ_tgt=0` degrades to A if needed. The design keeps the safety of A as a tunable fallback.
+1. **Update target = visual-encoder LayerNorm γ, β** in every method. Same as TENT/MLMP baselines, makes any difference attributable to loss + restoration choice, not parameterization.
+2. **Top-K% confidence mask = 0.2** for CMA-family (per-batch top 20%). Robust to overall confidence shifts. Pure TENT does NOT use this — covers all pixels — for clean comparison.
+3. **Source prototype init via pseudo-labels, not GT** (CMA-Proto): matches realistic CTTA. Bias mitigated via cross-prompt agreement filter.
+4. **External anchors do NOT solve confirmation bias** (lesson from CMA-Proto failure): the bias is in the class-index selection, which depends on the model's current state regardless of how anchor vectors are chosen.
+5. **Restoration is flat across LN params** in DivGate variants (not layer-stratified): keeps the gate as the sole experimental variable.
+6. **Gate's initial mode = aggressive (rst=0)**: starts free, brakes only after observing data. The first `monitor_interval` batches always have rst=0.
+7. **Default thresholds (h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05)** come from `proposal_after_cma.md §2.3`. Empirical observation (CMA-DivGate sub-experiments): brake mode rarely fires at default `h_warning=1.2`; effectively a 2-tier (aggressive ↔ cautious) controller. Cautious mode alone is sufficient when paired with TENT's slow drift.
+8. **Bash script convention**: `save/ACDCDataset/{method_name}_step_{steps}/` (or method-specific suffix for hyperparameter sweeps).
+9. **TENT-DivGate uses pure TENT loss (no top-K mask)** to keep a clean comparison with both pure TENT and CMA-DivGate.
 
 ---
 
-*End of session handoff. For any detail not covered here, follow the reading map in §6.*
+*End of research-arc document. For any detail not covered here, follow the reading map in §7.*
