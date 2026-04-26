@@ -16,6 +16,7 @@ from .cma_continual import CMAContinual
 from .cma_proto_continual import CMAProtoContinual
 from .cma_layered_continual import CMALayeredContinual
 from .cma_divgate_continual import CMADivGateContinual
+from .tent_divgate_continual import TENTDivGateContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -38,6 +39,8 @@ METHOD_CLASSES = {
     'cma_layered_continual': CMALayeredContinual,
     # Continual TTA with CMA + diversity-gated stochastic restoration (Direction B)
     'cma_divgate_continual': CMADivGateContinual,
+    # Continual TTA with TENT + diversity-gated stochastic restoration (Direction B on TENT)
+    'tent_divgate_continual': TENTDivGateContinual,
 }
 
 

@@ -246,6 +246,20 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--brake_rst', type=float, default=0.05,
                             help='Stochastic restore probability in brake mode')
 
+    # --- TENT-DivGate-Continual (TENT + diversity gate, Direction B on TENT base) ---
+    elif method == 'tent_divgate_continual':
+        parser.add_argument('--h_threshold', type=float, default=1.8,
+                            help='H_margin >= this -> aggressive mode (rst=0)')
+        parser.add_argument('--h_warning', type=float, default=1.2,
+                            help='h_warning <= H_margin < h_threshold -> cautious; '
+                                 '< h_warning -> brake')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+        parser.add_argument('--cautious_rst', type=float, default=0.005,
+                            help='Stochastic restore probability in cautious mode')
+        parser.add_argument('--brake_rst', type=float, default=0.05,
+                            help='Stochastic restore probability in brake mode')
+
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
