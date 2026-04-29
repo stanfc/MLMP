@@ -1,9 +1,10 @@
 # Experiment Status — Research Arc
 
-**Last updated**: 2026-04-26
-**Current state**: TENT-DivGate-Continual running, R26 of 150. Mean mIoU = 30.49, peak 32.50 @R20. **First method to match MLMP-episodic upper bound (30.6) under continual setting.**
-**Active runs**: `bash bash/ACDC_10_round/tent_divgate_continual.sh` (GPU 3, ~6h remaining)
-**Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48.
+**Last updated**: 2026-04-27
+**Current state**: cautious_rst sweep (5 variants) + h_threshold=1.6 baseline — ALL 150 rounds complete. Best single config: `h_thr=1.6, h_warn=1.4, cau_rst=0.01` → **mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU and stays stable to R150.
+**Active runs**: none.
+**Next planned**: h_threshold sweep (1.7, 1.8, 2.0) with cautious_rst fixed at 0.01 — see §4 for rationale.
+**Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48 (lower priority).
 
 This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
 
@@ -126,7 +127,7 @@ We implemented A and B in parallel.
 2. **But the absolute level (21.21) is still BELOW No Adapt baseline 23.34**: the gate prevents catastrophic collapse but the brake is sticky enough that mean never recovers to source level.
 3. **Most importantly**: even an *ideal* CMA-DivGate is bounded above by CMA's natural peak (27.4). **The base loss is the ceiling**.
 
-### Phase F: TENT-DivGate (Direction B on TENT base) — **CURRENT, MOST PROMISING**
+### Phase F: TENT-DivGate (Direction B on TENT base) — **COMPLETE, MAIN RESULT**
 
 **Implementation**: `adapt/tent_divgate_continual.py`. Spec: [docs/tent_divgate_continual_spec.md](tent_divgate_continual_spec.md).
 
@@ -134,21 +135,57 @@ We implemented A and B in parallel.
 
 **Mechanism**: identical gate to CMA-DivGate, but base loss is pure TENT pixel-wise entropy (no Top-K mask, matching `tent_continual.py`).
 
-**Result so far** (`save/ACDCDataset/tent_divgate_continual/`, **R26 of 150 in progress**):
+#### Phase F-1: Initial baseline run (h_thr=1.8, h_warn=1.2, cau_rst=0.005)
 
-| Round | TENT-natural | TENT-DivGate | Δ | comment |
+`save/ACDCDataset/tent_divgate_continual/` — 150 rounds complete.
+
+| Round | TENT-natural | TENT-DivGate | Δ |
+|---|---|---|---|
+| R1 | 23.89 | 23.89 | 0 (bit-identical, gate in aggressive/rst=0) |
+| R10 | 30.92 | 30.92 | 0 (still aggressive) |
+| R20 | 32.90 | 32.50 | −0.40 (gate has fired, cautious mode) |
+| R80 | ~8 | ~29 | **+21 (TENT collapsed; DivGate stable)** |
+| R150 | 7.90 | 29.02 | **+21.1** |
+
+**Overall**: mean=30.14, peak=32.50@R20, R150=29.02. **First method to match MLMP-episodic (30.6) over the full 150 rounds.** Natural TENT crashes by R80; DivGate holds above 29 to R150.
+
+Key observation: at h_warning=1.2, brake mode **never fires**. Gate behaves as 2-tier (aggressive ↔ cautious), same as CMA-DivGate. Also added `divgate_log.txt` file logging (H_margin trajectory, one row per 50-batch window).
+
+#### Phase F-2: Threshold adjustment + cautious_rst sweep
+
+**Change**: lowered h_threshold 1.8→1.6 (extends aggressive window, slightly higher peak) and raised h_warning 1.2→1.4 (gives brake mode a realistic trigger region). Then swept cautious_rst across 5 values.
+
+All 5 new variants use h_threshold=1.6, h_warning=1.4. Results (150 rounds each):
+
+| cautious_rst | mean (150R) | peak | R150 | gate: agg/cau/brake |
 |---|---|---|---|---|
-| R1 | 23.89 | 23.89 | 0 | bit-identical, gate aggressive (rst=0) |
-| R5 | 28.12 | 28.12 | 0 | identical, still aggressive |
-| R10 | 30.92 | 30.92 | 0 | matches TENT peak round, identical |
-| R15 | 32.45 | 32.17 | **−0.28** | **gate has fired** (cautious mode active) |
-| R20 | 32.90 | 32.50 | −0.40 | small consistent damping by gate |
-| R25 | 32.23 | 31.96 | −0.27 | tracking close to natural TENT |
-| R26 | — | 31.92 | — | mean over R1-R26 = **30.49** |
+| 0.001 | 27.13 | 32.90@R19 | 22.79 | still drifts late |
+| 0.003 | 28.32 | 32.90@R19 | 23.61 | drifts late |
+| 0.005 | 31.25 | 32.90@R19 | 29.92 | stable |
+| 0.008 | 31.49 | 32.95@R26 | **31.49** | very stable |
+| **0.010** | **31.59** | **32.96@R27** | **31.34** | **best overall** |
 
-**This is the first method that matches MLMP-episodic (30.6) under continual setting**. The remaining test is whether the gate continues to suppress the slow drift that takes natural TENT from R20=32.9 down to R150=7.9.
+Save dirs: `save/ACDCDataset/tent_divgate_continual_cau_rst_{value}/`
 
-The fact that the two trajectories were bit-identical for R1-R12 then diverged in lock-step is **direct evidence that the gate IS firing** — in cautious mode (since brake never fires at default thresholds, per Phase E sub-experiment). Cautious_rst = 0.005 is enough to slowly counter TENT's slow drift, where it was insufficient against CMA's fast drift.
+**Key findings from the sweep**:
+1. **cau_rst=0.01 is the new best**: mean=31.59 beats MLMP-episodic by +1.0 mIoU; R150=31.34 stays stable far above No Adapt (23.3).
+2. **The threshold change alone helped**: new variants peak at 32.90-32.96 vs baseline's 32.50 (h_threshold=1.6 allows slightly more aggressive early).
+3. **R150 stability jump**: 29.02 (baseline) → 31.34-31.49 (cau_rst≥0.008). The method is genuinely stable through 150 rounds.
+4. **Brake mode still never fires**: even with h_warning raised to 1.4. H_margin distribution (from cau_rst=0.01 log) shows 1204 aggressive / 14 cautious / 0 brake windows. H_margin min=1.576, max=2.646, mean=1.788, median≈1.751.
+
+#### Phase F-3: H_margin distribution analysis (basis for next sweep)
+
+H_margin histogram from cau_rst=0.01 run (1218 total 50-batch windows):
+
+| H_margin range | window count | % of time |
+|---|---|---|
+| [1.5, 1.6) | 14 | 1.1% ← current cautious zone |
+| [1.6, 1.7) | 308 | 25.3% |
+| [1.7, 1.8) | 511 | 41.9% ← median here |
+| [1.8, 1.9) | 234 | 19.2% |
+| [1.9+) | 151 | 12.4% (early rounds ~2.4-2.6) |
+
+At h_threshold=1.6, gate is in aggressive mode 98.9% of the time — the cautious mechanism barely activates. **Raising h_threshold** moves the threshold into the dense part of the distribution, triggering cautious restoration far more often.
 
 ---
 
@@ -169,22 +206,42 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 4. Open Questions / Risks for TENT-DivGate
+## 4. Open Questions / Next Planned Experiments
 
-1. **R30-R80 is the danger window**: natural TENT loses 11+ mIoU here. We need to see TENT-DivGate stay at 30+ through this window before declaring victory. Current trajectory is plateau-ish at 32, but only 26 rounds in.
-2. **H_margin per-monitor logging not yet added**: we can't directly verify whether brake ever fires or it's pure cautious-mode. Worth adding before re-running for the paper.
-3. **Per-condition lag on night**: night is at 27.34 vs other conditions at 33-34. This is consistent with natural TENT (night is always the laggard) but worth checking whether the gate could be tuned to help night specifically.
-4. **step=10 not yet tested**: TENT step=10 has higher natural peak (32.4 R2). If gate works at step=1, the step=10 variant might reach even higher mean.
+### Phase F-4 (planned): h_threshold sweep — isolate gate activation rate
+
+**Hypothesis**: at h_threshold=1.6, gate barely activates (1.1% cautious). Raising h_threshold into the dense region of the H_margin distribution (1.7-2.0) would make cautious restoration apply more frequently, potentially further improving stability.
+
+| h_threshold | predicted cautious rate | interpretation |
+|---|---|---|
+| 1.7 | ~25% | light gate activation |
+| 1.8 | ~67% | moderate — majority of time in cautious |
+| 2.0 | ~92% | heavy — almost always restoring; only very-early aggressive |
+
+**Plan**: fix cautious_rst=0.01 (established best from F-2), vary h_threshold ∈ {1.7, 1.8, 2.0}. h_warning stays at 1.4.
+
+**Prediction**: 1.7 or 1.8 may improve further over 1.6; 2.0 probably trades peak for stability.
+
+**Save dirs** (to be created):
+- `save/ACDCDataset/tent_divgate_continual_hthr_1.7/`
+- `save/ACDCDataset/tent_divgate_continual_hthr_1.8/`
+- `save/ACDCDataset/tent_divgate_continual_hthr_2.0/`
+
+### Other open questions (lower priority)
+
+- **Night condition lag**: night consistently lower than fog/rain/snow (~24-26 vs 33-34 at R150). Could try condition-specific gate or monitor threshold, but that complicates the method.
+- **step=10 variant**: TENT step=10 peaks higher (32.4 vs 30.9 at step=1). If gate works at step=1, step=10 with DivGate might yield even higher mean — but historically step=10 collapses faster too.
+- **CMA-Layered loose-rate runs**: paused at R47-48, academic completeness only.
 
 ---
 
 ## 5. Concrete Next Actions (in order)
 
-1. **Wait for current run to finish** (~6h). Watch R30, R40, R80 milestones in `save/ACDCDataset/tent_divgate_continual/results_all_rounds.txt`.
-2. **If mean stays > 28 through R80**: this is the paper's main result. Add per-monitor H_margin logging (small patch) and re-run for cleaner figures.
-3. **If gate fails at some point**: tune `h_warning` upward (1.4-1.6) so brake fires earlier; or lower `cautious_rst` to e.g. 0.003 to reduce damping while maintaining responsiveness.
-4. **Optional follow-up**: TENT-DivGate at step=10 to push the peak ceiling.
-5. **Optional follow-up**: continue the paused CMA-Layered loose-rate runs to 150 rounds to fully document Direction A's behavior (academic completeness).
+1. **Run h_threshold sweep** (3 runs, ~6h each on GPU): update `bash/ACDC_10_round/tent_divgate_continual.sh` with H_THRESHOLD={1.7,1.8,2.0}, CAUTIOUS_RST=0.01, H_WARNING=1.4.
+2. **After sweep completes**: update `plot_divgate_sweep.py` to add h_threshold variants and regenerate comparison figure.
+3. **Consolidate best config**: pick winner (likely 1.7 or 1.8) as the paper's main result. Update CLAUDE.md and EXPERIMENT_STATUS.md.
+4. **Optional**: TENT-DivGate step=10 if time permits.
+5. **Paper figures**: `acdc_divgate_cau_rst_sweep.png` already generated; generate h_threshold sweep figure; update `acdc_tent_divgate_150round.png` with best config.
 
 ---
 
@@ -230,7 +287,7 @@ Made across the project, recorded here for continuity:
 4. **External anchors do NOT solve confirmation bias** (lesson from CMA-Proto failure): the bias is in the class-index selection, which depends on the model's current state regardless of how anchor vectors are chosen.
 5. **Restoration is flat across LN params** in DivGate variants (not layer-stratified): keeps the gate as the sole experimental variable.
 6. **Gate's initial mode = aggressive (rst=0)**: starts free, brakes only after observing data. The first `monitor_interval` batches always have rst=0.
-7. **Default thresholds (h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05)** come from `proposal_after_cma.md §2.3`. Empirical observation (CMA-DivGate sub-experiments): brake mode rarely fires at default `h_warning=1.2`; effectively a 2-tier (aggressive ↔ cautious) controller. Cautious mode alone is sufficient when paired with TENT's slow drift.
+7. **Default thresholds** come from `proposal_after_cma.md §2.3`. After F-2 sweep, current best: `h_threshold=1.6, h_warning=1.4, cautious_rst=0.01, brake_rst=0.05, monitor_interval=50`. Brake mode never fires even at h_warning=1.4 (H_margin min observed = 1.576, brake triggers below 1.4 which never happens). Gate effectively 2-tier. Next: explore h_threshold 1.7-2.0 (Phase F-4).
 8. **Bash script convention**: `save/ACDCDataset/{method_name}_step_{steps}/` (or method-specific suffix for hyperparameter sweeps).
 9. **TENT-DivGate uses pure TENT loss (no top-K mask)** to keep a clean comparison with both pure TENT and CMA-DivGate.
 

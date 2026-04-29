@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟢 Current status (2026-04-26)**: `tent_divgate_continual` running on ACDC, R26 of 150. Mean mIoU = 30.49 (matches MLMP-episodic 30.6 target); peak 32.50 @R20. **First method that breaks the continual-vs-episodic tension** — needs to survive the R30-R80 window where natural TENT crashes.
+> **🟢 Current status (2026-04-27)**: h_threshold sweep running (R63/150 as of 2026-04-27). Variants at h_thr=1.5/1.6/1.7/1.8 (all cau_rst=0.01, h_warn=1.4). Early leader @R63: **h_thr=1.7 → mean≈32.15** (vs 1.8→31.31, 1.5→31.92). Prior confirmed best: **h_thr=1.6, h_warn=1.4, cau_rst=0.01 → mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU, stable to R150. Save dirs: `save/ACDCDataset/tent_divgate_continual_cau_threshold_{value}/`.
 > **For the full research arc (every method tried, what we learned, current state), read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** That file is the canonical entry point — this guide covers conventions and impl details, not narrative.
 
 ## Research Goal
@@ -92,11 +92,11 @@ The full narrative — what each method tried, why it failed or partially worked
 | `cma_proto_continual` | `adapt/cma_proto_continual.py` | [cma_proto_continual_spec.md](docs/cma_proto_continual_spec.md) | **Collapsed**. Frozen source prototype delayed collapse to R54 but didn't prevent it — confirmation bias remains because pseudo-label `ĉ_i` still comes from the current model. Motivated `proposal_after_cma.md`. |
 | `cma_layered_continual` | `adapt/cma_layered_continual.py` | [cma_layered_continual_spec.md](docs/cma_layered_continual_spec.md) | **Stable but flat**. Layer-stratified restoration (Direction A) caps at ~24 mIoU regardless of cutoff/rate combination. Negative result: defense moved to optimizer side cannot raise CMA's natural ceiling. |
 | `cma_divgate_continual` | `adapt/cma_divgate_continual.py` | [cma_divgate_continual_spec.md](docs/cma_divgate_continual_spec.md) | **Partial success**. Buffer-N H_margin gate (Direction B) prevented dead state (mean 21.21 vs CMA's 5.54), but base loss ceiling (CMA peak 27.4) caps overall mean below No Adapt 23.34. |
-| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Currently running, R26/150**. Same gate, **TENT base loss instead of CMA**. Mean mIoU = 30.49 already matches MLMP-episodic 30.6 target. Peak 32.50 @R20. Open question: survives R30-R80 window. |
+| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Best method. All 150R complete.** Baseline (h_thr=1.8): mean=30.14, R150=29.02. After cautious_rst sweep + threshold tune (h_thr=1.6, h_warn=1.4, cau_rst=0.01): **mean=31.59, peak=32.96@R27, R150=31.34**. Beats MLMP-episodic by +1.0 mIoU, stable to R150. **Next**: h_threshold sweep (1.7/1.8/2.0). |
 
 The original three-direction reframing is in [proposal_after_cma.md](proposal_after_cma.md) (written after CMA-Proto failed). Direction A = layered restoration; Direction B = diversity gate; Direction C (two-timescale meta-adapt) is still deferred.
 
-**Headline finding so far**: TENT-DivGate is the first method that *might* match MLMP-episodic under continual conditions. The same gate that *partially* worked on CMA *fully* works on TENT because TENT's drift is slow enough for cautious-mode restoration (rst=0.005) to compensate, while CMA's faster drift outpaces it.
+**Headline finding**: TENT-DivGate is the first method that **does** match and beat MLMP-episodic under continual conditions (mean 31.59 vs 30.6, stable to R150). The same gate that *partially* worked on CMA *fully* works on TENT because TENT's drift is slow enough for cautious-mode restoration to compensate (CMA collapsed in ~18 rounds; TENT drifts over ~60). Current work: h_threshold sweep to find the gate activation rate that maximises the mean.
 
 ### DPCore (parallel work, prompt-tuning approach)
 Instead of LayerNorm, learn visual prompt tokens. Maintain a coreset of (prompt, feature-stats) pairs — reuse nearest-match prompt for ID batches, learn a new prompt for OOD batches. See `adapt/dpcore.py`. Less central to the current research arc.
@@ -276,9 +276,42 @@ Both share the same gate machinery; only the base loss differs. Spec docs are ne
 | `cma_proto_continual.sh` | cma_proto_continual | main_continual.py | LR=1e-5, steps=1, batch=1, λ_cma=1.0, λ_src=1.0, λ_tgt=0.5, ema=0.999, src=fog |
 | `cma_layered_continual.sh` | cma_layered_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, early/mid/late_rst=0.001/0.01/0.05, cutoffs=8/16 (defaults; rates in the script have been tuned during ablation) |
 | `cma_divgate_continual.sh` | cma_divgate_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05 |
-| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05 (no top-K — pure TENT loss) |
+| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, no top-K — pure TENT loss. **Best confirmed**: h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. **Script currently set to h_thr=1.8, h_warn=1.4, cau_rst=0.01** for the h_threshold sweep (SAVE_DIR uses `_cau_threshold_${H_THRESHOLD}/` suffix). |
 
 Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the script). Multiple runs of the same method with different hyperparameters use suffixes like `cma_layered_continual_rate__0.001_0.05` or `cma_divgate_continual_brake_0.005`.
+
+---
+
+## Running & Monitoring Experiments
+
+Launch any bash script directly; GPU is set inside the script (`GPU_ID=N`):
+
+```bash
+bash bash/ACDC_10_round/tent_divgate_continual.sh
+```
+
+To run a variant with different hyperparameters, edit `H_THRESHOLD`, `CAUTIOUS_RST`, and `SAVE_DIR` inline before launching, or override on the fly:
+
+```bash
+H_THRESHOLD=1.7 CAUTIOUS_RST=0.01 SAVE_DIR="save/ACDCDataset/tent_divgate_continual_hthr_1.7/" \
+  bash bash/ACDC_10_round/tent_divgate_continual.sh
+```
+
+Check progress mid-run (results written after every round):
+
+```bash
+tail -5 save/ACDCDataset/<save_dir>/results_all_rounds.txt
+# Round N, fog, night, rain, snow, Mean_mIoU
+```
+
+Track gate behaviour (TENT-DivGate only — written every monitor_interval batches):
+
+```bash
+tail -20 save/ACDCDataset/<save_dir>/divgate_log.txt
+# total_batches,h_margin,mode
+```
+
+Mode-transition lines are also printed to stdout: `[DivGate-T] B{N}: H_margin={v}  old -> new`.
 
 ---
 
