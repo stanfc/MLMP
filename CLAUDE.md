@@ -4,8 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟢 Current status (2026-04-27)**: h_threshold sweep running (R63/150 as of 2026-04-27). Variants at h_thr=1.5/1.6/1.7/1.8 (all cau_rst=0.01, h_warn=1.4). Early leader @R63: **h_thr=1.7 → mean≈32.15** (vs 1.8→31.31, 1.5→31.92). Prior confirmed best: **h_thr=1.6, h_warn=1.4, cau_rst=0.01 → mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU, stable to R150. Save dirs: `save/ACDCDataset/tent_divgate_continual_cau_threshold_{value}/`.
+> **🟢 Current status (2026-05-03)**: ACDC h_threshold sweep **complete** (all 150R). Best ACDC config confirmed: **h_thr=1.6, h_warn=1.4, cau_rst=0.01 → mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU. **Next**: generalise to CityscapesDataset — implementing `bash/cityscapes_continual/tent_divgate_continual.sh` (15 ImageNet-C corruptions × 150 rounds, no code changes needed). Design spec: [docs/2026-05-03-cityscapes-continual-divgate-design.md](docs/2026-05-03-cityscapes-continual-divgate-design.md).
 > **For the full research arc (every method tried, what we learned, current state), read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** That file is the canonical entry point — this guide covers conventions and impl details, not narrative.
+
+## Environment Setup
+
+```bash
+conda create -n mlmp python==3.10.13
+conda activate mlmp
+pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+Requires CUDA 11.8. All experiments run with `--seed 0`. No test suite — correctness is validated by comparing `results_all_rounds.txt` against known baselines.
+
+---
 
 ## Research Goal
 
@@ -250,6 +263,18 @@ Both share the same gate machinery; only the base loss differs. Spec docs are ne
 - **TENT variant** (`tent_divgate_continual`): uses pure pixel-wise softmax entropy across all pixels (no top-K mask). Marginals come from `logits[0].softmax(dim=1)` — single prompt template (`tent_continual` convention).
 - **Determinism note (important for hyperparameter sweeps)**: with seed=0, runs differing only in `brake_rst` are bit-identical until brake mode actually fires. We saw this in the CMA-DivGate brake-rate sweep (`save/ACDCDataset/cma_divgate_continual_brake_*`) — the four runs were identical for the first 33 rounds because brake never triggered with the default `h_warning=1.2`. Cautious_rst was the only restoration in effect.
 
+### OVSS Model Types (`ovss/__init__.py` — `load_ovss()`)
+
+Three backbone modes, all using ViT-L/14:
+
+| `--ovss_type` | arch | attention | Used by |
+|---|---|---|---|
+| `clip` | vanilla | vanilla | baseline |
+| `sclip` | vanilla | csa | SCLIP variant |
+| `naclip` | reduced | naclip | **all current experiments** |
+
+`load_ovss()` calls `clip.load()` then `visual.set_params(arch, attn_strategy, gaussian_std=5.0)`. The modified CLIP in `ovss/clip/model.py` adds multi-layer output, `vision_out_type` selection, and CLS token return — the upstream OpenAI CLIP is not used directly.
+
 ### DPCore (`adapt/dpcore.py`) — Key Differences from Other Methods
 - **What's trained**: Visual prompt tokens (via `PromptVisualEncoder` wrapper in `adapt/prompt_vit.py`), NOT LayerNorm. Only `model.visual.prompts` has `requires_grad=True`.
 - **Source statistics required**: Must call `adapt_method.obtain_src_stat(src_loader)` before adaptation. For `ACDCDataset` (no clean 'original' split), `main_continual.py` uses the first condition (fog) as source proxy.
@@ -279,6 +304,27 @@ Both share the same gate machinery; only the base loss differs. Spec docs are ne
 | `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, no top-K — pure TENT loss. **Best confirmed**: h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. **Script currently set to h_thr=1.8, h_warn=1.4, cau_rst=0.01** for the h_threshold sweep (SAVE_DIR uses `_cau_threshold_${H_THRESHOLD}/` suffix). |
 
 Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the script). Multiple runs of the same method with different hyperparameters use suffixes like `cma_layered_continual_rate__0.001_0.05` or `cma_divgate_continual_brake_0.005`.
+
+---
+
+## Cityscapes Continual Scripts (`bash/cityscapes_continual/`)
+
+Mirrors the ACDC continual protocol but on CityscapesDataset (val split, 500 images) with synthetic ImageNet-C corruptions applied on-the-fly. **No Python code changes needed** — `main_continual.py` and `prepare_data()` already support CityscapesDataset.
+
+| Script | Method | Key difference from ACDC |
+|--------|--------|--------------------------|
+| `tent_divgate_continual.sh` | tent_divgate_continual | 15 corruptions × 500 imgs/round ≈ 7500/round (vs ACDC 8012) |
+
+**Corruption list** (`CORRUPTIONS_LIST` variable at top of script, ImageNet-C standard order):
+```
+gaussian_noise  shot_noise  impulse_noise          # noise
+defocus_blur    glass_blur  motion_blur  zoom_blur  # blur
+snow  frost  fog  brightness  contrast              # weather
+elastic_transform  pixelate  jpeg_compression       # digital
+```
+Comment out individual lines to run a subset (e.g., weather-only). Override via env vars identical to ACDC convention.
+
+Results saved to `save/CityscapesDataset/{method_name}/results_all_rounds.txt`. Columns: `Round, gaussian_noise, ..., jpeg_compression, Mean_mIoU`.
 
 ---
 
@@ -315,7 +361,9 @@ Mode-transition lines are also printed to stdout: `[DivGate-T] B{N}: H_margin={v
 
 ---
 
-## Result Parsing
+## Result Parsing & Visualization
+
+### ACDC Continual Results
 
 `parse_acdc_results.py` auto-generates a LaTeX table:
 - Reads `results_all_rounds.txt` for continual methods
@@ -325,3 +373,41 @@ Mode-transition lines are also printed to stdout: `[DivGate-T] B{N}: H_margin={v
 - Output: `save/ACDCDataset/acdc_table.tex`
 
 Run: `python parse_acdc_results.py`
+
+### Episodic Benchmark Results (non-ACDC)
+
+Two-step pipeline for the original 7-dataset benchmark with 15 corruptions:
+
+```bash
+python parse_results.py          # reads .save/ → results_summary.csv
+python generate_latex_table.py   # reads results_summary.csv → results_table.tex
+```
+
+`parse_results.py` walks `.save/{dataset}/mlmp/results.txt` files (episodic format), extracts mean ± std per corruption, and writes `results_summary.csv`. `generate_latex_table.py` formats it as a LaTeX table ordered by the 15-corruption sequence from the paper.
+
+### Plotting Scripts
+
+All scripts read from `save/ACDCDataset/` and write PNG+SVG to the same directory. Run from the repo root:
+
+| Script | Output file | What it shows |
+|--------|-------------|---------------|
+| `plot_acdc_round_miou.py` | `acdc_round_miou.{png,svg}` | Round vs mean mIoU (initial 20-round experiments for TENT/MLMP-continual/episodic) |
+| `plot_all_methods_comparison.py` | `all_methods_comparison.{png,svg}` | All methods on one figure; important methods solid, background methods faded |
+| `plot_divgate_sweep.py` | `acdc_divgate_cau_rst_sweep.{png,svg}` | `cautious_rst` sweep variants vs TENT-continual reference |
+| `plot_tent_divgate_threshold_sweep.py` | `acdc_divgate_threshold_sweep.{png,svg}` | `h_threshold` sweep variants |
+| `plot_hmargin_by_threshold.py` | `hmargin_threshold_sweep.{png,svg}` | H_margin trajectory per threshold variant; colour-coded by gate mode (green/orange/red) |
+| `plot_tent_divgate_compare.py` | *(see script header)* | Direct comparison of TENT-DivGate configs |
+
+### Qualitative Visualization
+
+`qualitative.py` randomly samples N images from a dataset, adapts MLMP, and saves original/GT/prediction/overlay quads:
+
+```bash
+python qualitative.py \
+    --dataset COCOStuffDataset \
+    --data_dir .data/coco_stuff164k/ \
+    --save_dir .qualitative/COCOStuffDataset/ \
+    --n_images 5 --seed 42 \
+    --ovss_type naclip --ovss_backbone ViT-L/14 \
+    --prompt_dir prompts.yaml
+```

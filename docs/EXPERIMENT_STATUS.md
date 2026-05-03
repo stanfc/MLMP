@@ -1,9 +1,9 @@
 # Experiment Status — Research Arc
 
-**Last updated**: 2026-04-27
-**Current state**: cautious_rst sweep (5 variants) + h_threshold=1.6 baseline — ALL 150 rounds complete. Best single config: `h_thr=1.6, h_warn=1.4, cau_rst=0.01` → **mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU and stays stable to R150.
+**Last updated**: 2026-05-03
+**Current state**: ACDC phase complete. Best ACDC config: `h_thr=1.6, h_warn=1.4, cau_rst=0.01` → **mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (+1.0 mIoU), stable to R150. h_threshold sweep also complete (see §2 Phase F-4 / memory).
 **Active runs**: none.
-**Next planned**: h_threshold sweep (1.7, 1.8, 2.0) with cautious_rst fixed at 0.01 — see §4 for rationale.
+**Next planned**: Cityscapes generalisation — `bash/cityscapes_continual/tent_divgate_continual.sh` (15 ImageNet-C corruptions × 150 rounds). Design: [docs/2026-05-03-cityscapes-continual-divgate-design.md](2026-05-03-cityscapes-continual-divgate-design.md). Script not yet written (in planning).
 **Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48 (lower priority).
 
 This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
@@ -206,7 +206,32 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 4. Open Questions / Next Planned Experiments
+## 4. Phase G: Cityscapes Generalisation (planned, 2026-05-03)
+
+**Motivation**: TENT-DivGate has been validated on ACDC (real adverse weather, 4 conditions). To support a generalisation claim in the paper, we need to show it works on a different dataset with different distribution shifts.
+
+**Setup**:
+- Dataset: CityscapesDataset val (500 clean images)
+- Corruptions: all 15 ImageNet-C corruptions in standard order, applied on-the-fly — no new data folder needed
+- Per round: 15 × 500 = 7,500 images (≈ same compute as ACDC's 8,012)
+- Rounds: 150
+- DivGate params: best ACDC values (h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05)
+- Save: `save/CityscapesDataset/tent_divgate_continual/`
+
+**Deliverable**: `bash/cityscapes_continual/tent_divgate_continual.sh` (script to be written).
+
+**Design spec**: [docs/2026-05-03-cityscapes-continual-divgate-design.md](2026-05-03-cityscapes-continual-divgate-design.md)
+
+**Code changes**: none — `main_continual.py` already supports CityscapesDataset and generic corruption lists.
+
+**Possible follow-up subsets** (all re-use the same script with `CORRUPTIONS_LIST` override):
+- Weather-only: `fog snow frost brightness` (4 conditions → direct ACDC analogy)
+- Noise-only: `gaussian_noise shot_noise impulse_noise`
+- Blur-only: `defocus_blur glass_blur motion_blur zoom_blur`
+
+---
+
+## 5. Open Questions (lower priority)
 
 ### Phase F-4 (planned): h_threshold sweep — isolate gate activation rate
 
@@ -235,7 +260,7 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 5. Concrete Next Actions (in order)
+## 6. Concrete Next Actions (in order)
 
 1. **Run h_threshold sweep** (3 runs, ~6h each on GPU): update `bash/ACDC_10_round/tent_divgate_continual.sh` with H_THRESHOLD={1.7,1.8,2.0}, CAUTIOUS_RST=0.01, H_WARNING=1.4.
 2. **After sweep completes**: update `plot_divgate_sweep.py` to add h_threshold variants and regenerate comparison figure.
@@ -245,7 +270,7 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 6. Codebase State — All Methods Currently Registered
+## 7. Codebase State — All Methods Currently Registered
 
 | Method name (CLI) | Class | File | Bash script | Spec |
 |---|---|---|---|---|
@@ -261,7 +286,7 @@ All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via
 
 ---
 
-## 7. Reading Map — Where to Find What
+## 8. Reading Map — Where to Find What
 
 | Question | Read |
 |----------|------|
@@ -277,7 +302,7 @@ All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via
 
 ---
 
-## 8. Key Design Decisions (Quick Reference)
+## 9. Key Design Decisions (Quick Reference)
 
 Made across the project, recorded here for continuity:
 
