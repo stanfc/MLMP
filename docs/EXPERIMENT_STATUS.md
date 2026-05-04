@@ -1,9 +1,8 @@
 # Experiment Status — Research Arc
 
-**Last updated**: 2026-05-03
-**Current state**: ACDC phase complete. Best ACDC config: `h_thr=1.6, h_warn=1.4, cau_rst=0.01` → **mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (+1.0 mIoU), stable to R150. h_threshold sweep also complete (see §2 Phase F-4 / memory).
-**Active runs**: none.
-**Next planned**: Cityscapes generalisation — `bash/cityscapes_continual/tent_divgate_continual.sh` (15 ImageNet-C corruptions × 150 rounds). Design: [docs/2026-05-03-cityscapes-continual-divgate-design.md](2026-05-03-cityscapes-continual-divgate-design.md). Script not yet written (in planning).
+**Last updated**: 2026-05-04
+**Current state**: ACDC phase complete (best config confirmed). Cityscapes generalisation phase **in progress** — experiments running, key negative finding discovered: TENT-DivGate does NOT improve on Cityscapes due to insufficient adaptation headroom. See §4 for full analysis.
+**Active runs**: tent_divgate_continual weather-5 (h_thr=1.6 / 1.7, ~35/150R done); tent_divgate_continual all-15 (h_thr=1.6 / 1.7, ~21/150R done).
 **Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48 (lower priority).
 
 This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
@@ -206,28 +205,82 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 4. Phase G: Cityscapes Generalisation (planned, 2026-05-03)
+## 4. Phase G: Cityscapes Generalisation — In Progress (2026-05-03~04)
 
-**Motivation**: TENT-DivGate has been validated on ACDC (real adverse weather, 4 conditions). To support a generalisation claim in the paper, we need to show it works on a different dataset with different distribution shifts.
+**Motivation**: TENT-DivGate has been validated on ACDC (real adverse weather, 4 conditions). To support a generalisation claim in the paper, we need to show it works on a different dataset.
 
-**Setup**:
-- Dataset: CityscapesDataset val (500 clean images)
-- Corruptions: all 15 ImageNet-C corruptions in standard order, applied on-the-fly — no new data folder needed
-- Per round: 15 × 500 = 7,500 images (≈ same compute as ACDC's 8,012)
-- Rounds: 150
-- DivGate params: best ACDC values (h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05)
-- Save: `save/CityscapesDataset/tent_divgate_continual/`
+**Setup**: CityscapesDataset val (500 clean images), 15 ImageNet-C corruptions on-the-fly via `CorruptTransform`, 150 rounds, evaluate-before-adapt. All scripts under `bash/cityscapes_continual/`. Design spec: [2026-05-03-cityscapes-continual-divgate-design.md](2026-05-03-cityscapes-continual-divgate-design.md).
 
-**Deliverable**: `bash/cityscapes_continual/tent_divgate_continual.sh` (script to be written).
+**Scripts written** (all use 15-corruption bash array, commentable per-line, `CORRUPTIONS_LIST` env-var override):
+- `no_adapt.sh`, `tent_continual.sh`, `cotta.sh`, `mlmp_continual.sh`, `mlmp_episodic.sh`, `tent_divgate_continual.sh`
 
-**Design spec**: [docs/2026-05-03-cityscapes-continual-divgate-design.md](2026-05-03-cityscapes-continual-divgate-design.md)
+**Cache note**: `CorruptTransform` caches generated corruptions to `data/.cache/corruptions/<md5>_<name>_s5.npy`. First round is slow (glass_blur: ~30-60s/image at 2048×1024, ~3-5h total for 500 images). Rounds 2+ load from cache and are fast. Total cache size ≈ 45 GB for all 15 corruptions × 500 images.
 
-**Code changes**: none — `main_continual.py` already supports CityscapesDataset and generic corruption lists.
+---
 
-**Possible follow-up subsets** (all re-use the same script with `CORRUPTIONS_LIST` override):
-- Weather-only: `fog snow frost brightness` (4 conditions → direct ACDC analogy)
-- Noise-only: `gaussian_noise shot_noise impulse_noise`
-- Blur-only: `defocus_blur glass_blur motion_blur zoom_blur`
+### G-1: Experiments Run and Results (as of 2026-05-04)
+
+| Experiment | Rounds | Mean R01 | Mean R_last | Trend |
+|---|---|---|---|---|
+| all-15 h_thr=1.6 | 21 | 19.54 | 19.11 | **flat, no improvement** |
+| all-15 h_thr=1.7 | 21 | 19.69 | 19.09 | **flat, no improvement** |
+| weather-5 h_thr=1.6 | 35 | 21.32 | 17.32 | **declining** |
+| weather-5 h_thr=1.7 | 35 | 21.32 | 18.11 | **declining** |
+| mlmp_continual all-15 | 12 | 18.45 | 0.18 | **catastrophic collapse by R02** |
+| **MLMP episodic weather-5** | — | — | **22.60** (mean) | upper bound |
+
+MLMP episodic weather-5 per condition: snow=21.86, frost=17.17, fog=24.56, brightness=32.35, contrast=17.04.
+
+---
+
+### G-2: Key Finding — TENT Does Not Create Positive Adaptation Signal on Cityscapes
+
+**Root cause: adaptation headroom gap.**
+
+| Dataset | Source model | MLMP episodic | Headroom | TENT-DivGate |
+|---|---|---|---|---|
+| ACDC | 23.3 | 30.6 | **+7.3 mIoU** | 31.59 ✅ beats episodic |
+| Cityscapes weather-5 | 21.32 | 22.60 | **+1.27 mIoU** | 18.11 ❌ worse than source |
+
+The fundamental problem: **TENT's entropy minimization requires a large performance gap to exploit**. On Cityscapes weather corruptions (brightness, contrast, fog, snow, frost at severity=5), NA-CLIP is already near-optimal. With only 1.27 mIoU of headroom and 500 samples per condition, TENT cannot find a consistent gradient direction; instead it drifts away from the source optimum (R35 = 18.11, **−3.21 below source model**).
+
+**DivGate analysis**: H_margin on Cityscapes (mean=2.03) is +0.25 nats higher than ACDC (mean=1.79). With h_thr=1.6/1.7, the gate fires only 2.5–3.8% of windows — almost identical firing rate to ACDC's 1.1%. The gate is NOT miscalibrated. The problem is upstream: DivGate maintains a plateau that TENT never builds. When TENT produces no plateau, DivGate has nothing to maintain.
+
+**Cross-group contamination in all-15 setting** (separate issue): Noise corruptions (gaussian, shot, impulse) collapse R1→R2 by −3 to −5 mIoU while weather/digital stay flat or improve. The 15-condition sequence creates cross-group forgetting: adaptation toward the majority (weather+digital, 10/15 conditions) degrades the minority (noise, 3/15). DivGate does not solve this because it monitors aggregate H_margin, not per-group diversity.
+
+**Weather-5 worse than all-15** (counterintuitive): with fewer conditions, the model is pushed harder toward the weather-optimal state, but that state is WORSE than source (pure TENT harm with no recovery). In all-15, diverse corruptions partly buffer each other → higher mean H_margin → more windows in aggressive mode → less over-restoration.
+
+---
+
+### G-3: What the R20/R26 Spikes Tell Us (weather-5 h_thr=1.7)
+
+R20=20.56 and R26=20.88 are anomalous peaks in the otherwise flat-declining weather-5 trajectory. These coincide with windows where the gate fired cautious mode. The model briefly recovered toward source-like performance. **This validates the gate mechanism** — restoration toward source IS helpful on Cityscapes weather, but it fires too infrequently to maintain improvement. A higher h_threshold would trigger restoration more often and might sustain performance at 20+.
+
+---
+
+### G-4: Open Questions for Cityscapes
+
+**Highest priority** (determines paper framing):
+
+1. **Run `tent_continual` (no gate) on weather-5**: Does pure TENT eventually collapse (< 10 mIoU) like ACDC? If yes, TENT-DivGate provides stability benefit even without improvement. If no (both flat), DivGate provides no benefit on Cityscapes. Script ready: `bash bash/cityscapes_continual/tent_continual.sh` with `CORRUPTIONS_LIST="fog snow frost brightness contrast"`.
+
+2. **Run `no_adapt` on weather-5 for 10 rounds**: Confirm source model baseline = constant 21.32. Any method worse than this is harmful. Script ready: `bash bash/cityscapes_continual/no_adapt.sh` with weather-5 subset.
+
+3. **Try h_thr=2.2–2.3 on weather-5**: This would put Cityscapes firing rate at ~20-30% (analogous to "frequent but not constant" cautious mode). The R20/R26 spikes suggest restoration helps; we need it to fire more often. Hypothesis: TENT-DivGate with high h_thr would maintain ~20+ mIoU by frequently restoring away from TENT's harmful drift.
+
+4. **Run MLMP episodic on all-15**: Check whether noise/blur corruptions have significantly more headroom. If so, all-15 might provide enough headroom in aggregate for a positive Cityscapes result.
+
+---
+
+### G-5: Paper Framing Options
+
+| Option | Framing | Risk |
+|---|---|---|
+| **A (recommended)** | ACDC = primary result. Cityscapes = limitation/analysis section. Show headroom dependency as finding. | Low — honest, ACDC result is strong enough |
+| **B** | Cityscapes weather-5 with high h_thr (2.2+). If this works (20+), adds a generalization claim. | Medium — needs new experiments |
+| **C** | Characterise Cityscapes all-15 as harder benchmark; show TENT-DivGate is stable even if not improving (vs mlmp_continual collapse). | Low — valid if tent_continual also eventually collapses |
+
+**Do NOT** report weather-5 R35=18.11 as a positive result — it is below source model (21.32).
 
 ---
 
@@ -262,11 +315,38 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ## 6. Concrete Next Actions (in order)
 
-1. **Run h_threshold sweep** (3 runs, ~6h each on GPU): update `bash/ACDC_10_round/tent_divgate_continual.sh` with H_THRESHOLD={1.7,1.8,2.0}, CAUTIOUS_RST=0.01, H_WARNING=1.4.
-2. **After sweep completes**: update `plot_divgate_sweep.py` to add h_threshold variants and regenerate comparison figure.
-3. **Consolidate best config**: pick winner (likely 1.7 or 1.8) as the paper's main result. Update CLAUDE.md and EXPERIMENT_STATUS.md.
-4. **Optional**: TENT-DivGate step=10 if time permits.
-5. **Paper figures**: `acdc_divgate_cau_rst_sweep.png` already generated; generate h_threshold sweep figure; update `acdc_tent_divgate_150round.png` with best config.
+**ACDC — complete, no action needed.**
+
+**Cityscapes — key diagnostics needed before deciding paper scope:**
+
+1. **Run `tent_continual` weather-5** (most important): determines whether DivGate provides any stability benefit on Cityscapes. If it collapses while DivGate holds at 19, there's still a contribution.
+   ```bash
+   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
+   SAVE_DIR="save/CityscapesDataset/tent_continual_weather/" \
+   bash bash/cityscapes_continual/tent_continual.sh
+   ```
+
+2. **Run `no_adapt` weather-5** (1-2 rounds only, just for baseline number):
+   ```bash
+   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
+   SAVE_DIR="save/CityscapesDataset/no_adapt_weather/" \
+   CONTINUAL_ROUNDS=3 bash bash/cityscapes_continual/no_adapt.sh
+   ```
+
+3. **Try h_thr=2.2 on weather-5** (test the spike hypothesis):
+   ```bash
+   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
+   H_THRESHOLD=2.2 \
+   SAVE_DIR="save/CityscapesDataset/tent_divgate_continual_weather_hthr2.2/" \
+   bash bash/cityscapes_continual/tent_divgate_continual.sh
+   ```
+
+4. **Run MLMP episodic on all-15** (check headroom for noise/blur groups):
+   ```bash
+   bash bash/cityscapes_continual/mlmp_episodic.sh   # (edit to use all-15 corruptions)
+   ```
+
+5. **Decide paper framing** based on (1) and (3) results. See §4 G-5 for options.
 
 ---
 
