@@ -1,69 +1,102 @@
 #!/bin/bash
-# GPU Configuration
-GPU_ID=3
+# CoTTA on PascalVOC20Dataset (CTTA, N rounds) with NA-CLIP backbone.
+# Open-vocabulary segmentation: class names are text prompts, no closed-set head.
+# 15 ImageNet-C corruptions applied on-the-fly.
+#
+# CoTTA three mechanisms:
+#   1. EMA teacher (mt=0.999) for stable pseudo-labels
+#   2. Augmentation-averaged pseudo-labels when anchor confidence < ap
+#   3. Stochastic restoration (rst=0.01) to prevent catastrophic forgetting
+#
+# ─── Patch convention (DO NOT CHANGE without noting in result file) ───
+# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# This is THE comparable v20 setting; results from other patch settings
+# are not directly comparable. See
+# docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 
-# Dataset Configuration
+# ── GPU ────────────────────────────────────────────────────────────
+GPU_ID=0
+
+# ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
-DATA_DIR=".data/VOC2012/"
-INIT_RESIZE="224 224"
-ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+DATA_DIR="data/VOC/VOC2012/"
+INIT_RESIZE="448 448"
 WORKERS=4
 
-# Method and OVSS Model Configuration
+# ── Corruption conditions (ImageNet-C standard order) ──────────────
+# Comment out individual lines to run a subset.
+CORRUPTIONS_ARRAY=(
+    # --- noise ---
+    gaussian_noise
+    shot_noise
+    impulse_noise
+    # --- blur ---
+    defocus_blur
+    glass_blur
+    motion_blur
+    zoom_blur
+    # --- weather ---
+    snow
+    frost
+    fog
+    brightness
+    contrast
+    # --- digital ---
+    elastic_transform
+    pixelate
+    jpeg_compression
+)
+CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
+
+# ── Method ─────────────────────────────────────────────────────────
 METHOD="cotta"
-OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
-PROMPT_DIR="prompts.yaml"
-ALPHA_CLS=1.0
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# CoTTA Hyperparameters
-BATCH_SIZE=32                 # Mini-batch size for each adaptation step
-LR=1e-5                     # Learning rate for adapting model parameters
-STEPS=1                      # Number of gradient steps per batch (inner loop iterations)
-TRIALS=1                     # Number of adaptation trials/runs for robustness
-MT=0.999                     # Momentum coefficient for exponential moving average (EMA) of model weights
-RST=0.01                     # Reset strength - controls how much to reset model toward original before adaptation
-AP=0.7                      # Adaptation probability - probability of applying stochastic updates to avoid catastrophic forgetting
-AUG_N=32                     # Number of augmented views generated for self-supervised learning
-FINETUNE_MODE="ln"           # 'ln' for LayerNorm only, 'full' for all visual params - LayerNorm reduces forgetting
-PROMPT_INTEGRATION="text"    # How prompts are integrated: 'text' for text-based adaptation
+# ── CoTTA hyperparameters (matching original CoTTA paper values) ────
+MT=0.999        # EMA smoothing factor for teacher
+RST=0.01        # stochastic restoration probability
+AP=0.92         # anchor confidence threshold (augment when mean conf < AP)
+AUG_N=32        # number of augmented teacher views
 
-# Output
-SAVE_DIR=".save/${DATASET}/${METHOD}/"
+# Use last layer only (standard CoTTA spirit — no multi-level fusion)
+OUT_VISION="-1"
 
-# Run
-CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
+# ── Training hyperparameters ───────────────────────────────────────
+BATCH_SIZE=1
+LR=0.00001
+STEPS=1
+
+# ── Experiment ─────────────────────────────────────────────────────
+CONTINUAL_ROUNDS=150
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+
+# ───────────────────────────────────────────────────────────────────
+CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
-                        --continual \
                         --method $METHOD \
-                        --prompt_dir $PROMPT_DIR \
-                        --vision_outputs $OUT_VISION \
-                        --alpha_cls $ALPHA_CLS \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
                         \
-                        --save_dir $SAVE_DIR \
-                        --data_dir $DATA_DIR \
-                        --dataset $DATASET \
-                        --workers $WORKERS \
-                        --init_resize $INIT_RESIZE \
-                        --patch_size 224 224 \
-                        --patch_stride 112 \
-                        --corruptions_list $ALL_CORRUPTIONS \
-                        \
-                        --lr $LR \
-                        --steps $STEPS \
-                        --batch-size $BATCH_SIZE \
-                        --trials $TRIALS \
-                        --seed 0 \
-                        \
-                        --prompt_integration $PROMPT_INTEGRATION \
+                        --vision_outputs $OUT_VISION \
                         --mt $MT \
                         --rst $RST \
                         --ap $AP \
                         --aug_n $AUG_N \
-                        --finetune_mode $FINETUNE_MODE \
                         \
-                        --plot_loss \
+                        --dataset $DATASET \
+                        --data_dir $DATA_DIR \
+                        --init_resize $INIT_RESIZE \
+                        --patch_size 224 224 \
+                        --patch_stride 112 \
+                        --corruptions_list $CORRUPTIONS_LIST \
+                        --workers $WORKERS \
+                        \
+                        --lr $LR \
+                        --steps $STEPS \
+                        --batch_size $BATCH_SIZE \
+                        --continual_rounds $CONTINUAL_ROUNDS \
+                        --seed 0 \
+                        \
+                        --save_dir $SAVE_DIR \
                         --class_extensions
