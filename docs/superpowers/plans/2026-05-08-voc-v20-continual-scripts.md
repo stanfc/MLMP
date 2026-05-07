@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add 6 bash scripts under `bash/v20/` that run 150-round CTTA experiments on PascalVOC20Dataset (1449 val images × 15 ImageNet-C corruptions) using the cityscape continual convention, with corruption caching enabled and a clearly recorded 448×448 / 9-patch evaluation setting.
+**Goal:** Add 6 bash scripts under `bash/v20/` that run 150-round CTTA experiments on PascalVOC20Dataset (1449 val images × 15 ImageNet-C corruptions) using the cityscape continual convention, with corruption caching enabled and a clearly recorded 224×224 / 1-patch evaluation setting (matches the original MLMP paper convention; revised from initial 448×448 multi-patch).
 
-**Architecture:** Pure bash scripts. No Python changes. Each script calls `main_continual.py` (or `main.py` for episodic MLMP) with the right CLI flags. Corruption caching is provided by `prepare_data()` automatically deriving `cache_dir = data/VOC/.cache/corruptions/` from `DATA_DIR=data/VOC/VOC2012/`. The patch convention (`INIT_RESIZE="448 448"`, `patch_size=224 224`, `patch_stride=112` → 3×3=9 patches/image) is documented in a comment block at the top of every script and recorded in project memory after sanity check passes.
+**Architecture:** Pure bash scripts. No Python changes. Each script calls `main_continual.py` (or `main.py` for episodic MLMP) with the right CLI flags. Corruption caching is provided by `prepare_data()` automatically deriving `cache_dir = data/VOC/.cache/corruptions/` from `DATA_DIR=data/VOC/VOC2012/`; cache is independent of `INIT_RESIZE` because `CorruptTransform` runs before `ResizeAndPatchify`. The patch convention (`INIT_RESIZE="224 224"`, `patch_size=224 224`, `patch_stride=112` → 1×1=1 patch/image) is documented in a comment block at the top of every script and recorded in project memory after sanity check passes.
 
 **Tech Stack:** bash, existing PyTorch / NA-CLIP / MLMP code in this repo.
 
@@ -27,7 +27,7 @@ Memory file (created in Task 8 after sanity check passes):
 
 | File | Responsibility |
 |---|---|
-| `~/.claude/projects/-home-tekai324-MLMP/memory/voc_patch_convention.md` | Records the 448×448 / 9-patch convention as an experiment-record requirement |
+| `~/.claude/projects/-home-tekai324-MLMP/memory/voc_patch_convention.md` | Records the 224×224 / 1-patch convention as an experiment-record requirement |
 
 ---
 
@@ -40,7 +40,7 @@ This block is reproduced verbatim in every bash script (the patch comment is THE
 # <one-line description matching cityscape sibling>
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -51,7 +51,7 @@ Common variables (placed near the top of every script, dataset block):
 ```bash
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 ```
 
@@ -82,7 +82,7 @@ Cache flag is **not** passed explicitly — `prepare_data()` derives it automati
 # Use this to establish the lower bound before comparing continual TTA methods.
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -93,7 +93,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -192,7 +192,7 @@ git commit -m "bash/v20: add no_adapt baseline script"
 # 15 ImageNet-C corruptions applied on-the-fly.
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -203,7 +203,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -303,7 +303,7 @@ Uses ACDC best config: `h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05`.
 # as cityscape, hyperparameters set to ACDC-best.
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -314,7 +314,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -428,7 +428,7 @@ git commit -m "bash/v20: add tent_divgate_continual script (ACDC-best config)"
 # mechanism). Use as ablation baseline against cotta.sh and tent_divgate_continual.sh.
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -439,7 +439,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -549,7 +549,7 @@ This script calls `main.py` (NOT `main_continual.py`). Per-sample reset → adap
 # 15 ImageNet-C corruptions applied on-the-fly; uses main.py (not main_continual.py).
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -560,7 +560,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -673,7 +673,7 @@ git commit -m "bash/v20: add mlmp_episodic upper-bound script"
 #   3. Stochastic restoration (rst=0.01) to prevent catastrophic forgetting
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -684,7 +684,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
@@ -872,25 +872,25 @@ name: VOC v20/v21 patch convention for 150-round continual experiments
 description: Required INIT_RESIZE / patch_size / patch_stride for v20 (and v21) continual TTA results to be comparable
 type: project
 ---
-For PascalVOC20Dataset (and PascalVOC21Dataset) 150-round continual experiments, all bash scripts under `bash/v20/` use:
+For PascalVOC20Dataset (and PascalVOC21Dataset) 150-round continual experiments, all bash scripts under `bash/v20/` and `bash/v21/` use:
 
-- INIT_RESIZE = "448 448"
+- INIT_RESIZE = "224 224"
 - patch_size = 224 224
 - patch_stride = 112
-- → 3 × 3 = 9 patches per image
+- → 1 × 1 = 1 patch per image (matches MLMP paper)
 
-**Why:** This is THE comparable v20 setting. Different patch settings produce different absolute mIoU numbers and are NOT comparable. The previous (deleted) `bash/v20/` used INIT_RESIZE="224 224" (single patch); we deliberately switched to 448×448 to match the cityscape multi-patch convention and to retain spatial detail.
+**Why:** This is THE comparable v20/v21 setting. Different patch settings produce different absolute mIoU numbers and are NOT comparable. This convention matches the deleted `bash/v20/` (commit 2dd84c3) and the original MLMP paper. An earlier version of this spec used 448×448 multi-patch (9 patches/image) — that was rolled back because (a) VOC is object-centric and gains little from multi-patch, (b) compute would be 9× higher, and (c) results would not be comparable to paper baselines.
 
 **How to apply:** Whenever the user discusses or requests v20/v21 results, mIoU numbers, or comparisons across runs:
-1. Confirm the run used the 448x448 / 9-patch setting (check the bash script header comment block).
-2. Any v20 mIoU number reported in tables/papers/discussion MUST be accompanied by this patch setting.
-3. If a result was produced with a different patch setting (e.g. 224 single-patch from older runs), it is NOT comparable to current v20 results — flag this explicitly.
+1. Confirm the run used the 224x224 / 1-patch setting (check the bash script header comment block).
+2. Any v20/v21 mIoU number reported in tables/papers/discussion MUST be accompanied by this patch setting.
+3. If a result was produced with a different patch setting (e.g. an early 448 sanity run), it is NOT comparable to current v20/v21 results — flag this explicitly.
 
-**Compute consequence:** 1449 images × 9 patches × 15 corruptions × 150 rounds ≈ 29.3M patch forward passes per full-15 method.
+**Compute consequence:** 1449 images × 1 patch × 15 corruptions × 150 rounds ≈ 3.26M forward passes per full-15 method.
 
-**Cache location:** `data/VOC/.cache/corruptions/<md5>_<corruption>_s5.npy`. Auto-derived by `prepare_data()` from `DATA_DIR=data/VOC/VOC2012/`. Validated by Task 7 sanity check on 2026-05-08.
+**Cache location:** `data/VOC/.cache/corruptions/<md5>_<corruption>_s5.npy`. Auto-derived by `prepare_data()` from `DATA_DIR=data/VOC/VOC2012/`. Cache is **independent of `INIT_RESIZE`** because `CorruptTransform` runs before `ResizeAndPatchify`; switching from 448 to 224 (or back) does NOT invalidate cache.
 
-**Source of truth:** docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2 and §12. Bash scripts under `bash/v20/` carry an in-file comment block reproducing this convention.
+**Source of truth:** docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2 and §12. Bash scripts under `bash/v20/` and `bash/v21/` carry an in-file comment block reproducing this convention.
 ```
 
 - [ ] **Step 2: Add an index entry to MEMORY.md**
@@ -898,7 +898,7 @@ For PascalVOC20Dataset (and PascalVOC21Dataset) 150-round continual experiments,
 Read `/home/tekai324/.claude/projects/-home-tekai324-MLMP/memory/MEMORY.md` first to see existing entries, then append:
 
 ```
-- [voc_patch_convention.md](voc_patch_convention.md) — VOC v20/v21 must use INIT_RESIZE=448x448 / patch=224 / stride=112 (9 patches/image) for results to be comparable
+- [voc_patch_convention.md](voc_patch_convention.md) — VOC v20/v21 must use INIT_RESIZE=224x224 / patch=224 / stride=112 (1 patch/image, matches MLMP paper) for results to be comparable
 ```
 
 - [ ] **Step 3: Verify memory was saved correctly**

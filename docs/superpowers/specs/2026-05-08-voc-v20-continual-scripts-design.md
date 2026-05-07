@@ -26,19 +26,20 @@ This design replaces those with the **current Phase-2 convention** (mirrors `bas
 
 | Setting | Value | Effect |
 |---|---|---|
-| `INIT_RESIZE` | `"448 448"` | Image is upsampled to 448×448 before patching |
+| `INIT_RESIZE` | `"224 224"` | Image is resized to exactly 224×224 (one ViT patch grid) |
 | `PATCH_SIZE` | `"224 224"` | Each forward pass operates on 224×224 |
-| `PATCH_STRIDE` | `112` | Half-overlap sliding window |
-| → patches per image | **3 × 3 = 9** | (448 − 224)/112 + 1 = 3 along each axis |
+| `PATCH_STRIDE` | `112` | Stride retained for code consistency; with 224×224 init it's a no-op |
+| → patches per image | **1 × 1 = 1** | (224 − 224)/112 + 1 = 1 along each axis |
 
-**Why 448×448 (not 224 single-patch, not native ~500×500)**:
-- Single-patch (224×224) loses spatial detail — the entire image is one CLIP forward pass with no patch averaging. This was the deleted v20 default; rejected because OVSS pipelines benefit from patched evaluation.
-- Native size (~500×500, no resize) gives a non-uniform patch count per image (depends on actual size), making batches statistically unstable and complicating compute estimates.
-- 448×448 with stride=112 gives a clean, fixed 3×3 grid per image and matches Cityscapes' multi-patch convention. Per-image compute is ≈9× single-patch but still tractable.
+**Why 224×224 single-patch (revised from initial 448×448 multi-patch)**:
+- **Matches the original MLMP paper convention** — the deleted `bash/v20/` (commit 2dd84c3) used `INIT_RESIZE="224 224"`. Reproducing paper baselines on v20 requires the same patch setting; otherwise the comparison is invalid.
+- **VOC is object-centric** (1-3 objects per image, ~500×500 native) — most of the segmentation signal is in the overall silhouette, not fine boundary detail. Multi-patch evaluation typically gives only a small mIoU improvement (~1-3 pts) on VOC, in contrast to scene-level datasets like Cityscapes (~5-10 pts).
+- **Compute is 9× cheaper** than 448×448 multi-patch. For 14 runs (7 methods × v20+v21) at 150 rounds, this is the difference between ~32 GPU-hours and ~280 GPU-hours total.
+- The original recommendation in this spec (448×448) was a misapplied port of the cityscape multi-patch convention. Cityscapes is 2048×1024 scene-level imagery where multi-patch is essential; VOC is not.
 
-**Compute estimate**: 1449 images × 9 patches × 15 corruptions × 150 rounds = ~29.3M patch forward passes per method. At ViT-L/14 throughput of ~50 patches/s/GPU, this is ≈160 GPU-hours per full-15 method. Caching halves rounds 2+ I/O cost.
+**Compute estimate**: 1449 images × 1 patch × 15 corruptions × 150 rounds ≈ 3.26M forward passes per full-15 method. Per the no_adapt sanity (224 single-patch, WORKERS=1), throughput is dataloader-bound rather than compute-bound; expect ~3-4 sec per corruption per round, ≈55 sec/round, ≈2.3 GPU-hours per full-15 method.
 
-**This setting MUST be reported in any v20 result table or paper text.** Different patch settings produce different absolute mIoU numbers and are not comparable.
+**This setting MUST be reported in any v20 result table or paper text.** Different patch settings produce different absolute mIoU numbers and are not comparable. Do NOT mix 224 numbers with the older 448 sanity result (67.77).
 
 ---
 
@@ -67,7 +68,7 @@ Every script (with method-specific variations noted in §5) shares:
 GPU_ID=0
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"          # ★ 9 patches per image — see design doc §2
+INIT_RESIZE="224 224"          # ★ 1 patch per image (paper convention) — see design doc §2
 PATCH_SIZE="224 224"
 PATCH_STRIDE=112
 WORKERS=4
@@ -85,7 +86,7 @@ Each script also contains, near the top, a comment block reproducing the patch c
 
 ```bash
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20 setting; results from other patch settings
 # are not directly comparable. See docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 ```
@@ -135,7 +136,9 @@ The `prepare_data()` function ([utils/segmentation_datasets.py:501](utils/segmen
 
 Cache files use `<md5(img_path)>_<corruption>_s5.npy`. VOC image paths cannot collide with Cityscape paths, so the cache directory could even be shared safely — but auto-derivation already places it under `data/VOC/`. Round 1 generates and caches; rounds 2-150 load from cache (≈10× faster I/O than regeneration, especially for `glass_blur` which is the slow generator).
 
-**Estimated cache size**: 1449 images × 15 corruptions × 448×448×3 bytes ≈ 13 GB total. (Smaller than Cityscapes' ~45 GB because VOC images are smaller.)
+**Cache is independent of `INIT_RESIZE`**: `CorruptTransform` runs immediately after `LoadImageFromFile` ([utils/segmentation_datasets.py:566](utils/segmentation_datasets.py#L566)) and BEFORE `ResizeAndPatchify`. The cached `.npy` file is the corrupted image at native resolution. So switching from `INIT_RESIZE="448 448"` to `"224 224"` (or back) does NOT invalidate existing cache files — only changing the underlying images or the corruption_severity does.
+
+**Estimated cache size**: 1449 images × 15 corruptions × ~500×400×3 bytes ≈ 13 GB total (VOC native ~500×400). Smaller than Cityscapes' ~45 GB because VOC images are smaller.
 
 ---
 
@@ -212,13 +215,13 @@ Identical to Cityscapes:
 
 ---
 
-## 10. Out of Scope
+## 10. Out of Scope (status updates)
 
-- **v21** (PascalVOC21Dataset) — explicitly deferred to a follow-up; user said "先做v20"
-- **`mlmp_divgate_continual.sh`** — user did not list it
-- **Result parser** — `parse_acdc_results.py` is ACDC-specific; a v20 parser can be added later
-- **Plot scripts** — none in this iteration
-- **Python code changes** — not needed; all dataset/method support is already in place
+- ~~**v21** (PascalVOC21Dataset) — explicitly deferred to a follow-up~~ → **DONE 2026-05-08**: 7 scripts ported under `bash/v21/` (mechanical sed substitution, same patch convention).
+- ~~**`mlmp_divgate_continual.sh`** — user did not list it~~ → **DONE 2026-05-08**: added to both `bash/v20/` and `bash/v21/` after initial 6 scripts.
+- **Result parser** — `parse_acdc_results.py` is ACDC-specific; a v20 parser can be added later (still TBD).
+- **Plot scripts** — none in this iteration (still TBD).
+- **Python code changes** — not needed; all dataset/method support is already in place.
 
 ---
 
@@ -235,8 +238,17 @@ Before declaring the scripts complete:
 
 ## 12. Experiment Record Convention (★)
 
-**For every v20 result included in any paper / table / discussion, the following MUST be recorded next to the mIoU number**:
+**For every v20/v21 result included in any paper / table / discussion, the following MUST be recorded next to the mIoU number**:
 
-> v20 patch convention: `INIT_RESIZE=448x448, patch=224x224, stride=112` (9 patches/image)
+> v20/v21 patch convention: `INIT_RESIZE=224x224, patch=224x224, stride=112` (1 patch/image, matches MLMP paper)
 
-This will be added to the project memory after the scripts land so that future sessions automatically include it in result discussions.
+This is reflected in project memory (`voc_patch_convention.md`) so future sessions automatically include it in result discussions.
+
+### Revision history of this convention
+
+| Date | Convention | Reason |
+|---|---|---|
+| 2026-05-08 (initial) | 448×448 / 9 patches/image | Misapplied port of cityscape multi-patch style — VOC is object-centric, doesn't need it |
+| 2026-05-08 (revised, current) | 224×224 / 1 patch/image | Matches deleted `bash/v20/` and original MLMP paper convention; 9× cheaper compute; necessary for paper-baseline comparability |
+
+The R01==R02=67.77 sanity result captured under the 448 convention is **not** comparable to current 224 results. It was deleted; a fresh 224 sanity confirms the same R01==R02 deterministic property.
