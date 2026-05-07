@@ -5,7 +5,7 @@
 # Use this to establish the lower bound before comparing continual TTA methods.
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 448x448 + patch 224x224 stride 112 → 3x3=9 patches/image.
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 # This is THE comparable v20/v21 setting; results from other patch settings
 # are not directly comparable. See
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
@@ -16,7 +16,7 @@ GPU_ID=0
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC21Dataset
 DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="448 448"
+INIT_RESIZE="224 224"
 WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
