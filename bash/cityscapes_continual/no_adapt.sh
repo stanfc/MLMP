@@ -5,7 +5,7 @@
 # Use this to establish the lower bound before comparing continual TTA methods.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=1
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset
@@ -17,14 +17,14 @@ WORKERS=4
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    #gaussian_noise
+    #shot_noise
+    #impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    #defocus_blur
+    #glass_blur
+    #motion_blur
+    #zoom_blur
     # --- weather ---
     snow
     frost
@@ -32,9 +32,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    #elastic_transform
+    #pixelate
+    #jpeg_compression
 )
 # One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
@@ -47,7 +47,7 @@ OVSS_BACKBONE="ViT-L/14"
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
 BATCH_SIZE=1
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

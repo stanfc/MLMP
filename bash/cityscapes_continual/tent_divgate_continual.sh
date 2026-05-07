@@ -5,7 +5,7 @@
 # See docs/2026-05-03-cityscapes-continual-divgate-design.md.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=3
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset
@@ -17,14 +17,14 @@ WORKERS=4
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -32,9 +32,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 # One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
@@ -50,7 +50,7 @@ LR=0.00001
 STEPS=1
 
 # ── Diversity gate (best confirmed from ACDC sweeps) ───────────────
-H_THRESHOLD=1.6       # H_margin >= this        -> aggressive (rst=0)
+H_THRESHOLD=2.0       # H_margin >= this        -> aggressive (rst=0)
 H_WARNING=1.4         # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
 MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
 CAUTIOUS_RST=0.01
@@ -58,7 +58,7 @@ BRAKE_RST=0.05
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_threshold_${H_THRESHOLD}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
