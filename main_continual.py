@@ -414,12 +414,15 @@ def main(args):
     # DPCore's obtain_src_stat pattern; uses corruption="original" so no
     # CorruptTransform is inserted into the pipeline.
     if args.method == 'eata_continual':
-        src_dataset  = args.src_dataset  or args.dataset
-        src_data_dir = args.src_data_dir or args.data_dir
-        src_corruption = 'original'
+        src_dataset  = args.src_dataset    or args.dataset
+        src_data_dir = args.src_data_dir   or args.data_dir
+        # Datasets with a clean val split (VOC, Cityscapes) use "original".
+        # ACDC has no clean split — pass --src_corruption fog (or another
+        # condition) to use it as a source proxy, mirroring cma_proto_continual.
+        src_corruption = args.src_corruption or 'original'
 
-        print(f"\n[EATA] Loading clean source: dataset='{src_dataset}', "
-              f"data_dir='{src_data_dir}' ...")
+        print(f"\n[EATA] Loading source: dataset='{src_dataset}', "
+              f"data_dir='{src_data_dir}', corruption='{src_corruption}' ...")
         src_loader, _ = segmentation_datasets.prepare_data(
             src_dataset, src_data_dir, args.init_resize,
             args.patch_size, args.patch_stride,
