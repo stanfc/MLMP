@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟢 Current status (2026-05-03)**: ACDC h_threshold sweep **complete** (all 150R). Best ACDC config confirmed: **h_thr=1.6, h_warn=1.4, cau_rst=0.01 → mean=31.59, peak=32.96@R27, R150=31.34** — beats MLMP-episodic (30.6) by +1.0 mIoU. **Next**: generalise to CityscapesDataset — implementing `bash/cityscapes_continual/tent_divgate_continual.sh` (15 ImageNet-C corruptions × 150 rounds, no code changes needed). Design spec: [docs/2026-05-03-cityscapes-continual-divgate-design.md](docs/2026-05-03-cityscapes-continual-divgate-design.md).
+> **🟢 Current status (2026-05-19)**:
+> - **ACDC win**: TENT-DivGate (h_thr=1.6, cau_rst=0.01) mean=31.59, beats MLMP-episodic 30.6 by +1.0 mIoU, stable 150R.
+> - **Cityscapes + VOC20 negative**: continual TTA collapses or stays below source on synthetic ImageNet-C corruptions. **Root cause: adaptation headroom**. ACDC headroom = 7.3 mIoU works; Cityscapes 1.3 / VOC20 4.6 don't. See [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §4 (Cityscapes), §5 (VOC20).
+> - **Next**: SAR-Continual and EATA-Continual implemented (`adapt/sar_continual.py`, `adapt/eata_continual.py`, `adapt/sam.py`), bash scripts ready for v20 and ACDC, smoke-tested but not yet run for full experiments. Design spec: [docs/2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md). EXPERIMENT_STATUS §6 has concrete run commands.
+>
 > **For the full research arc (every method tried, what we learned, current state), read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** That file is the canonical entry point — this guide covers conventions and impl details, not narrative.
 
 ## Environment Setup

@@ -1,8 +1,8 @@
 # Experiment Status — Research Arc
 
-**Last updated**: 2026-05-04
-**Current state**: ACDC phase complete (best config confirmed). Cityscapes generalisation phase **in progress** — experiments running, key negative finding discovered: TENT-DivGate does NOT improve on Cityscapes due to insufficient adaptation headroom. See §4 for full analysis.
-**Active runs**: tent_divgate_continual weather-5 (h_thr=1.6 / 1.7, ~35/150R done); tent_divgate_continual all-15 (h_thr=1.6 / 1.7, ~21/150R done).
+**Last updated**: 2026-05-19
+**Current state**: ACDC phase COMPLETE. Cityscapes and VOC20 generalisation phases reveal a **fundamental headroom problem**: on synthetic ImageNet-C corruptions where the source model is already near MLMP-episodic performance (gap ≤ 5 mIoU), no continual TTA method (including TENT-DivGate, MLMP-DivGate) can produce an upward trend — all variants collapse or degrade below source. **New methods (SAR, EATA) implemented and smoke-tested**; ready to run as the next candidate for breaking the headroom barrier. See §4 (Cityscapes) and §5 (VOC20) for full analysis.
+**Active runs**: none currently. Next: run SAR/EATA on VOC20 weather-5 and ACDC.
 **Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48 (lower priority).
 
 This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
@@ -205,7 +205,7 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-## 4. Phase G: Cityscapes Generalisation — In Progress (2026-05-03~04)
+## 4. Phase G: Cityscapes Generalisation — COMPLETE (2026-05-03 → 2026-05-10)
 
 **Motivation**: TENT-DivGate has been validated on ACDC (real adverse weather, 4 conditions). To support a generalisation claim in the paper, we need to show it works on a different dataset.
 
@@ -218,16 +218,22 @@ This is a useful general lesson: **the same anti-collapse mechanism can succeed 
 
 ---
 
-### G-1: Experiments Run and Results (as of 2026-05-04)
+### G-1: Final Experiments and Results
 
-| Experiment | Rounds | Mean R01 | Mean R_last | Trend |
-|---|---|---|---|---|
-| all-15 h_thr=1.6 | 21 | 19.54 | 19.11 | **flat, no improvement** |
-| all-15 h_thr=1.7 | 21 | 19.69 | 19.09 | **flat, no improvement** |
-| weather-5 h_thr=1.6 | 35 | 21.32 | 17.32 | **declining** |
-| weather-5 h_thr=1.7 | 35 | 21.32 | 18.11 | **declining** |
-| mlmp_continual all-15 | 12 | 18.45 | 0.18 | **catastrophic collapse by R02** |
-| **MLMP episodic weather-5** | — | — | **22.60** (mean) | upper bound |
+All save dirs under `save/CityscapesDataset/`.
+
+| Experiment | Rounds | Trend |
+|---|---|---|
+| tent_divgate_continual all-15 h_thr=1.6 | 150 | flat, no improvement |
+| tent_divgate_continual all-15 h_thr=1.7 | 150 | flat, no improvement |
+| tent_divgate_continual weather-5 h_thr=1.6 | 150 | declining |
+| tent_divgate_continual weather-5 h_thr=1.7 | 150 | declining |
+| tent_divgate_continual weather-5 h_thr=2.0 | 150 | (diagnostic for high-restoration test) |
+| tent_continual weather-5 | 150 | (diagnostic — baseline for DivGate vs no-gate) |
+| tent_continual single-corruption fog | 150 | (diagnostic — pure TENT under no inter-corruption drift) |
+| mlmp_continual all-15 | 150 | catastrophic collapse |
+| mlmp_divgate_continual weather-5 h_thr=1.6 | 150 | partial stability |
+| **MLMP episodic weather-5** | — | upper bound: mean=22.60 |
 
 MLMP episodic weather-5 per condition: snow=21.86, frost=17.17, fog=24.56, brightness=32.35, contrast=17.04.
 
@@ -284,7 +290,127 @@ R20=20.56 and R26=20.88 are anomalous peaks in the otherwise flat-declining weat
 
 ---
 
-## 5. Open Questions (lower priority)
+## 5. Phase H: VOC20 Generalisation — COMPLETE (2026-05-08 → 2026-05-18)
+
+**Motivation**: After Cityscapes failed to generalise, VOC20 was the second test of whether the methods transfer to another synthetic-corruption dataset.
+
+**Setup**: PascalVOC20Dataset val (1449 images), 15 ImageNet-C corruptions on-the-fly, 150 rounds, evaluate-before-adapt. Patch convention `INIT_RESIZE=224x224, patch=224, stride=112` → 1 patch per image (matches MLMP paper). Scripts under `bash/v20/`.
+
+### H-1: Final Results (mean over rounds)
+
+| Method | all-15 mean (R_last) | weather-5 mean (R_last) | Notes |
+|---|---|---|---|
+| **No-Adapt** | 69.00 (constant) | 70.79 (constant) | very high source baseline |
+| **MLMP-episodic** | **74.11** (single-pass) | **75.35** (single-pass) | upper bound |
+| CoTTA | 68.82 | 70.67 | stable, no improvement (R22 / R65) |
+| TENT-continual | 1.12 (R42→0.26) | 0.98 (R150→0.26) | **catastrophic collapse** |
+| MLMP-continual | 2.89 (R40→0.25) | 2.51 (R120→0.17) | **catastrophic collapse** |
+| TENT-DivGate (h_thr=1.6) | 58.12 (R35→57.85, peak 62.54@R20) | 59.24 (R109→57.73) | degrades but doesn't crash |
+| MLMP-DivGate (h_thr=1.6) | 66.92 (R36→66.91) | 67.89 (R145→67.65) | **best continual**, but still below source |
+
+### H-2: Key Findings
+
+**Finding 1 — Even larger headroom problem than Cityscapes.**
+On VOC20, source = 70.79 (weather), MLMP-episodic = 75.35. Headroom = 4.56 mIoU. Cityscapes weather-5 had 1.27. ACDC had 7.3. VOC20 sits in between, but **no continual method even reaches the source baseline**, let alone the episodic upper bound. The best continual result (MLMP-DivGate, 67.89) is still 2.9 mIoU below No-Adapt.
+
+**Finding 2 — DivGate is necessary but not sufficient on VOC20.**
+- Without gate: TENT/MLMP collapse to ~0.2 mIoU (worse than random).
+- With gate: TENT-DivGate plateaus at 58, MLMP-DivGate at 67 — better than collapsed but still below source.
+- DivGate's job (prevent collapse) succeeds. It cannot, however, produce positive adaptation.
+
+**Finding 3 — MLMP loss beats TENT loss on VOC20 in the continual setting.**
+MLMP-DivGate 67.89 vs TENT-DivGate 59.24 (weather-5). This is the inverse of ACDC, where TENT loss was strictly better. Hypothesis: VOC20's 1-patch-per-image setting makes per-sample entropy noisier; MLMP's multi-prompt averaging stabilizes the signal.
+
+**Finding 4 — VOC20 is a more brittle setting than Cityscapes.**
+- Cityscapes TENT-continual reached round 80+ before collapsing.
+- VOC20 TENT-continual collapses to single digits within 10–20 rounds.
+- Likely cause: 1 patch/image × 1449 images = sparse gradient updates per condition.
+
+### H-3: Generated Figures
+
+All saved under `save/PascalVOC20Dataset/`:
+- `voc20_methods_all15.{png,svg}` — methods comparison, 15 corruptions
+- `voc20_methods_weather.{png,svg}` — methods comparison, weather-5 subset
+- `hmargin_voc20_all15.{png,svg}` — H_margin trajectories, TENT-DivGate vs MLMP-DivGate
+- `hmargin_voc20_weather.{png,svg}` — H_margin trajectories, weather-5
+
+Plot scripts: `plot_voc20_methods_comparison.py`, `plot_hmargin_voc20.py`.
+
+### H-4: What VOC20 Adds to the Story
+
+VOC20 confirms that the headroom dependency is **real and dataset-independent** — it's not a Cityscapes quirk. The pattern is now:
+
+| Dataset | Source | Episodic | Headroom | Best continual | Outcome |
+|---|---|---|---|---|---|
+| ACDC | 23.3 | 30.6 | 7.3 | **TENT-DivGate 31.59** | ✅ beats episodic |
+| Cityscapes weather-5 | 21.3 | 22.6 | 1.3 | TENT-DivGate 18.1 | ❌ below source |
+| VOC20 weather-5 | 70.8 | 75.4 | 4.6 | MLMP-DivGate 67.9 | ❌ below source |
+| VOC20 all-15 | 69.0 | 74.1 | 5.1 | MLMP-DivGate 66.9 | ❌ below source |
+
+The transition is sharp: somewhere between 5 and 7 mIoU headroom, continual TTA stops working with current methods.
+
+---
+
+## 6. Phase I: SAR-Continual and EATA-Continual — IMPLEMENTED, NOT YET RUN (2026-05-17~19)
+
+**Motivation**: Both Cityscapes and VOC20 results show that TENT-loss-based methods cannot find positive gradients in low-headroom regimes. SAR and EATA were chosen as candidate fixes (see [docs/2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) for survey reasoning):
+
+- **SAR** (ICLR 2023): SAM optimizer finds flatter loss minima that generalize better when headroom is small; reliable sample filtering reduces noise; model recovery resets when entropy spikes.
+- **EATA** (ICML 2022): Pre-stream Fisher information defines a *structured* anti-forgetting penalty (Fisher-weighted EWC), in contrast to DivGate's *stochastic* restoration. Reliable + non-redundant sample filtering.
+
+### I-1: Implementation Status
+
+| File | Status |
+|---|---|
+| `adapt/sam.py` | SAM optimizer wrapper for SAR |
+| `adapt/sar_continual.py` | SAR-Continual main class |
+| `adapt/eata_continual.py` | EATA-Continual main class (with `obtain_src_fisher()` pre-stream hook) |
+| `adapt/__init__.py` | both registered |
+| `main_continual.py` | CLI args added; EATA pre-stream Fisher dispatch (mirrors DPCore's `obtain_src_stat`) |
+| `bash/v20/sar_continual.sh` | VOC20 runner |
+| `bash/v20/eata_continual.sh` | VOC20 runner |
+| `bash/ACDC_10_round/sar_continual.sh` | ACDC runner |
+| `bash/ACDC_10_round/eata_continual.sh` | ACDC runner (uses `--src_corruption fog` as proxy, no clean ACDC split) |
+
+Both methods smoke-tested (`--debug`, 2 corruptions × 5 batches) on VOC20 and ACDC; produce expected outputs (`results_all_rounds.txt`, per-batch `sar_log.txt` / `eata_log.txt`).
+
+### I-2: Deviations from Original Papers
+
+Documented in detail in the design spec. Highlights:
+- LayerNorm-only updates (not BatchNorm) — paper used BN
+- Per-pixel entropy averaged per image (not image-level) — segmentation adaptation
+- SAR augmented-view variance filtering NOT implemented (only entropy-based filtering)
+- EATA condition-aware Fisher NOT implemented (single Fisher matrix)
+- `e_margin = 0.4 × ln(num_classes)` — kept as paper formula (1.198 for VOC20, 1.178 for ACDC)
+
+### I-3: Next Experiments (in priority order)
+
+1. **SAR-Continual on VOC20 weather-5** (150 rounds, default hyperparams). Compare vs MLMP-DivGate 67.89.
+2. **EATA-Continual on VOC20 weather-5** (150 rounds, fisher_alpha=2000). Same comparison.
+3. **SAR + EATA on ACDC** (150 rounds, 4 conditions). If they match or beat TENT-DivGate (31.59), the methods generalise.
+4. **Diagnostic on logs**: after Phase I-1/2, count `was_filtered` (SAR) and `non_redundant` (EATA) rates from `*_log.txt`. If non_redundant < 20%, increase `d_margin` from 0.05 to 0.1-0.2 (smoke test showed it's too strict).
+5. **If results show promise**: sweep `sam_rho ∈ {0.01, 0.05, 0.1}` for SAR, `fisher_alpha ∈ {0, 200, 2000, 20000}` for EATA.
+
+### I-4: Concrete Run Commands
+
+```bash
+# VOC20 weather-5
+CORRUPTIONS_LIST="snow frost fog brightness contrast" \
+SAVE_DIR="save/PascalVOC20Dataset/sar_continual_weather/" \
+bash bash/v20/sar_continual.sh
+
+CORRUPTIONS_LIST="snow frost fog brightness contrast" \
+SAVE_DIR="save/PascalVOC20Dataset/eata_continual_weather/" \
+bash bash/v20/eata_continual.sh
+
+# ACDC
+bash bash/ACDC_10_round/sar_continual.sh
+bash bash/ACDC_10_round/eata_continual.sh
+```
+
+---
+
+## 7. Open Questions (lower priority)
 
 ### Phase F-4 (planned): h_threshold sweep — isolate gate activation rate
 
@@ -313,44 +439,47 @@ R20=20.56 and R26=20.88 are anomalous peaks in the otherwise flat-declining weat
 
 ---
 
-## 6. Concrete Next Actions (in order)
+## 8. Concrete Next Actions (in order)
 
-**ACDC — complete, no action needed.**
+**ACDC, Cityscapes, VOC20 baselines — complete.**
 
-**Cityscapes — key diagnostics needed before deciding paper scope:**
+**Next research move: test whether SAR/EATA can break the headroom barrier.**
 
-1. **Run `tent_continual` weather-5** (most important): determines whether DivGate provides any stability benefit on Cityscapes. If it collapses while DivGate holds at 19, there's still a contribution.
+1. **SAR on VOC20 weather-5** (highest priority — VOC20 is the cleanest test bed with continuous trajectories already established for all baselines):
    ```bash
-   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
-   SAVE_DIR="save/CityscapesDataset/tent_continual_weather/" \
-   bash bash/cityscapes_continual/tent_continual.sh
+   CORRUPTIONS_LIST="snow frost fog brightness contrast" \
+   SAVE_DIR="save/PascalVOC20Dataset/sar_continual_weather/" \
+   bash bash/v20/sar_continual.sh
    ```
+   Success criterion: mean > 70.79 (No-Adapt) for at least 50 rounds. Stretch: approach 75.35 (MLMP-episodic).
 
-2. **Run `no_adapt` weather-5** (1-2 rounds only, just for baseline number):
+2. **EATA on VOC20 weather-5** (parallel):
    ```bash
-   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
-   SAVE_DIR="save/CityscapesDataset/no_adapt_weather/" \
-   CONTINUAL_ROUNDS=3 bash bash/cityscapes_continual/no_adapt.sh
+   CORRUPTIONS_LIST="snow frost fog brightness contrast" \
+   SAVE_DIR="save/PascalVOC20Dataset/eata_continual_weather/" \
+   bash bash/v20/eata_continual.sh
    ```
+   Same success criterion.
 
-3. **Try h_thr=2.2 on weather-5** (test the spike hypothesis):
+3. **Diagnostic on filter rates** after first ~5 rounds of each:
    ```bash
-   CORRUPTIONS_LIST="fog snow frost brightness contrast" \
-   H_THRESHOLD=2.2 \
-   SAVE_DIR="save/CityscapesDataset/tent_divgate_continual_weather_hthr2.2/" \
-   bash bash/cityscapes_continual/tent_divgate_continual.sh
+   # SAR: fraction of samples filtered out (high entropy)
+   awk -F',' 'NR>2 {f+=$3; n++} END {print "SAR filtered:", f/n}' save/PascalVOC20Dataset/sar_continual_weather/sar_log.txt
+   # EATA: fraction passing non-redundant filter (cosine vs EMA)
+   awk -F',' 'NR>2 {r+=$4; n++} END {print "EATA non-redundant:", r/n}' save/PascalVOC20Dataset/eata_continual_weather/eata_log.txt
    ```
+   If EATA non-redundant rate < 20%, raise `d_margin` from 0.05 to 0.1–0.2 (smoke test showed 0.05 is too strict).
 
-4. **Run MLMP episodic on all-15** (check headroom for noise/blur groups):
-   ```bash
-   bash bash/cityscapes_continual/mlmp_episodic.sh   # (edit to use all-15 corruptions)
-   ```
+4. **If VOC20 results show promise**: run same methods on ACDC to confirm they don't break what TENT-DivGate already wins on (ACDC scripts ready under `bash/ACDC_10_round/`).
 
-5. **Decide paper framing** based on (1) and (3) results. See §4 G-5 for options.
+5. **If first-pass results are flat or worse**: hyperparam sweep:
+   - SAR: `sam_rho ∈ {0.01, 0.05, 0.1, 0.2}`
+   - EATA: `fisher_alpha ∈ {0, 200, 2000, 20000}` (alpha=0 = SAR-style filter only, no EWC)
+   - Both: `e_margin ∈ {0.5, 1.0, 1.5, 2.0}` if filter rate is extreme
 
 ---
 
-## 7. Codebase State — All Methods Currently Registered
+## 9. Codebase State — All Methods Currently Registered
 
 | Method name (CLI) | Class | File | Bash script | Spec |
 |---|---|---|---|---|
@@ -359,14 +488,19 @@ R20=20.56 and R26=20.88 are anomalous peaks in the otherwise flat-declining weat
 | `cma_layered_continual` | `CMALayeredContinual` | `adapt/cma_layered_continual.py` | `bash/ACDC_10_round/cma_layered_continual.sh` | [cma_layered_continual_spec.md](cma_layered_continual_spec.md) |
 | `cma_divgate_continual` | `CMADivGateContinual` | `adapt/cma_divgate_continual.py` | `bash/ACDC_10_round/cma_divgate_continual.sh` | [cma_divgate_continual_spec.md](cma_divgate_continual_spec.md) |
 | `tent_divgate_continual` | `TENTDivGateContinual` | `adapt/tent_divgate_continual.py` | `bash/ACDC_10_round/tent_divgate_continual.sh` | [tent_divgate_continual_spec.md](tent_divgate_continual_spec.md) |
+| `mlmp_divgate_continual` | `MLMPDivGateContinual` | `adapt/mlmp_divgate_continual.py` | `bash/{ACDC_10_round,v20,cityscapes_continual}/mlmp_divgate_continual.sh` | (uses same DivGate spec) |
+| `sar_continual` | `SARContinual` | `adapt/sar_continual.py` (+ `adapt/sam.py`) | `bash/{v20,ACDC_10_round}/sar_continual.sh` | [2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) |
+| `eata_continual` | `EATAContinual` | `adapt/eata_continual.py` | `bash/{v20,ACDC_10_round}/eata_continual.sh` | [2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) |
 
 Plus the original baselines (`tent_continual`, `mlmp_continual`, `cotta`, `dpcore`, `mlmp` episodic) which are unchanged.
+
+Bash scripts exist under three dataset prefixes: `bash/ACDC_10_round/` (4 conditions, 1120×560), `bash/cityscapes_continual/` (15 corruptions, 1120×560, 500 imgs), `bash/v20/` (15 corruptions, 224×224 single-patch, 1449 imgs). All datasets share the same `main_continual.py` entry point and `evaluate-before-adapt` protocol.
 
 All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via `main_continual.py::add_method_specific_args`. Results are saved under `save/ACDCDataset/{save_dir}/results_all_rounds.txt` and parsed by `parse_acdc_results.py` into `acdc_table.tex`.
 
 ---
 
-## 8. Reading Map — Where to Find What
+## 10. Reading Map — Where to Find What
 
 | Question | Read |
 |----------|------|
@@ -382,7 +516,7 @@ All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via
 
 ---
 
-## 9. Key Design Decisions (Quick Reference)
+## 11. Key Design Decisions (Quick Reference)
 
 Made across the project, recorded here for continuity:
 
