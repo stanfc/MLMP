@@ -276,6 +276,32 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--brake_rst', type=float, default=0.05,
                             help='Stochastic restore probability in brake mode')
 
+    # --- SAR-Continual (Sharpness-Aware Reliable, ICLR 2023) ---
+    elif method == 'sar_continual':
+        parser.add_argument('--e_margin', type=float, default=1.198,
+                            help='Per-sample mean entropy threshold; samples > this are skipped. '
+                                 'Default 1.198 = 0.4 * ln(20) for VOC20.')
+        parser.add_argument('--sam_rho', type=float, default=0.05,
+                            help='SAM perturbation radius (default 0.05 from SAR paper)')
+        parser.add_argument('--e_0', type=float, default=0.2,
+                            help='If loss EMA exceeds this, reset model to source')
+        parser.add_argument('--ema_factor', type=float, default=0.9,
+                            help='EMA decay for the loss moving average')
+        parser.add_argument('--recovery_warmup', type=int, default=50,
+                            help='Number of batches before recovery can fire')
+
+    # --- EATA-Continual (Efficient + Anti-forgetting, ICML 2022) ---
+    elif method == 'eata_continual':
+        parser.add_argument('--e_margin', type=float, default=1.198,
+                            help='Per-sample mean entropy threshold for reliable filter')
+        parser.add_argument('--d_margin', type=float, default=0.05,
+                            help='Cosine-similarity gap for non-redundant filter; '
+                                 'a sample is kept if cos(sample, ema) < 1 - d_margin')
+        parser.add_argument('--fisher_alpha', type=float, default=2000.0,
+                            help='Weight on EWC penalty in total loss')
+        parser.add_argument('--fisher_size', type=int, default=2000,
+                            help='Number of clean source samples used to estimate Fisher')
+
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
@@ -381,6 +407,27 @@ def main(args):
             shuffle=False
         )
         adapt_method.obtain_src_stat(src_loader)
+        del src_loader
+
+    # EATA-Continual requires a one-time forward pass on clean source data to
+    # compute the per-LN-param Fisher diagonal (used as EWC weights). Mirrors
+    # DPCore's obtain_src_stat pattern; uses corruption="original" so no
+    # CorruptTransform is inserted into the pipeline.
+    if args.method == 'eata_continual':
+        src_dataset  = args.src_dataset  or args.dataset
+        src_data_dir = args.src_data_dir or args.data_dir
+        src_corruption = 'original'
+
+        print(f"\n[EATA] Loading clean source: dataset='{src_dataset}', "
+              f"data_dir='{src_data_dir}' ...")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False
+        )
+        adapt_method.obtain_src_fisher(src_loader)
         del src_loader
 
     # CMA-Proto-continual requires per-class source prototypes before adaptation.
