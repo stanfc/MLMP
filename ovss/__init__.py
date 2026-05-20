@@ -38,13 +38,6 @@ def load_ovss(ovss_type, ovss_backbone, device='cpu'):
         ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
         tokenize = clip_tokenize
 
-    elif ovss_type == 'catseg':
-        from ovss.catseg import load_catseg
-        ovss_model, tokenize = load_catseg(
-            backbone=ovss_backbone,
-            device=device,
-        )
-
     else:
         raise ValueError(f"Unsupported OVSS type: {ovss_type}")
 
