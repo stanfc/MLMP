@@ -145,11 +145,41 @@ def test_gradient_flow():
           not torch.allclose(target_now, target_ln_snapshot))
 
 
+def test_ln_grad_helpers_compatibility():
+    """Phase 2: tent_continual.py's set_ln_grads / collect_ln_params
+    work on wrapper.visual without changes."""
+    print("\n=== Test: TENT helpers compatible with wrapper ===")
+    from adapt.tent_continual import TENTContinual
+    from ovss.catseg import load_catseg
+
+    wrapper, _ = load_catseg(backbone='ViT-L/14', device='cpu')
+
+    # Run TENT's setup logic on wrapper.visual
+    visual_after = TENTContinual.set_ln_grads(wrapper.visual)
+    params, names = TENTContinual.collect_ln_params(wrapper.visual)
+
+    check("set_ln_grads returns the module it was given",
+          visual_after is wrapper.visual)
+    check(f"collect_ln_params found at least 50 LN params (got {len(params)})",
+          len(params) >= 50)
+    # ViT-L/14 expected = 100 (24 blocks * 2 LN * 2 params + ln_pre*2 + ln_post*2)
+    check(f"collect_ln_params count == 100 (got {len(params)})",
+          len(params) == 100)
+    # All collected params are trainable
+    check("all collected params requires_grad=True",
+          all(p.requires_grad for p in params))
+    # No aggregator params in the collected set
+    agg_param_ids = {id(p) for p in wrapper.aggregator.parameters()}
+    check("no aggregator params in collected LN set",
+          not any(id(p) in agg_param_ids for p in params))
+
+
 if __name__ == "__main__":
     test_import_and_instantiate()
     test_load_ovss_routing()
     test_forward_shape()
     test_gradient_flow()
+    test_ln_grad_helpers_compatibility()
     if _failed:
         print("\n*** SANITY CHECKS FAILED ***")
         sys.exit(1)
