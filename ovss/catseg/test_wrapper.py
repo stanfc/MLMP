@@ -50,8 +50,20 @@ def test_import_and_instantiate():
     return wrapper
 
 
+def test_load_ovss_routing():
+    """Phase 1: load_ovss('catseg', ...) routes to CATSegWrapper."""
+    print("\n=== Test: load_ovss routing ===")
+    from ovss import load_ovss
+    from ovss.catseg.catseg_wrapper import CATSegWrapper
+    model, tokenize = load_ovss('catseg', 'ViT-L/14', device='cpu')
+    check("load_ovss('catseg', ...) returns CATSegWrapper",
+          isinstance(model, CATSegWrapper))
+    check("tokenizer is callable", callable(tokenize))
+
+
 if __name__ == "__main__":
     test_import_and_instantiate()
+    test_load_ovss_routing()
     if _failed:
         print("\n*** SANITY CHECKS FAILED ***")
         sys.exit(1)
