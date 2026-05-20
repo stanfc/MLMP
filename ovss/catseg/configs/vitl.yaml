@@ -1,0 +1,13 @@
+# CAT-Seg ViT-L/14 hyperparameters.
+# Populated during Task 6 from cvlab-kaist/CAT-Seg configs/vitl_*.yaml.
+
+aggregator:
+  embed_dim: 768
+  num_heads: 8
+  num_layers: 4
+  num_classes_train: 171   # COCO-Stuff (used during CAT-Seg training)
+  # Additional fields filled in Task 6 after inspecting official config.
+
+clip_backbone:
+  backbone: ViT-L/14
+  input_resolution: 384
