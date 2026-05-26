@@ -631,6 +631,20 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
         mm_config = copy.deepcopy(mm_darkzurich_cfg)
     elif dataset == "NighttimeDrivingDataset":
         mm_config = copy.deepcopy(mm_nightdriving_cfg)
+    elif dataset == "DZ_ND_Combined":
+        # Combined-stream mode: args.data_dir is IGNORED. Sub-paths are
+        # hardcoded per-condition because DZ and ND live in separate parents.
+        # `corruption` is overloaded to name the sub-dataset.
+        if corruption == "dark_zurich":
+            mm_config = copy.deepcopy(mm_darkzurich_cfg)
+            mm_config['data_root'] = "data/Dark_Zurich_val_anon/"
+        elif corruption == "nighttime_driving":
+            mm_config = copy.deepcopy(mm_nightdriving_cfg)
+            mm_config['data_root'] = "data/NighttimeDrivingTest/"
+        else:
+            raise ValueError(
+                f"DZ_ND_Combined: unknown sub-dataset '{corruption}', "
+                f"expected 'dark_zurich' or 'nighttime_driving'")
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
     
@@ -651,6 +665,7 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
     # (no synthetic CorruptTransform needed).
     _NATIVE_SHIFT_DATASETS = (
         "ACDCDataset", "DarkZurichDataset", "NighttimeDrivingDataset",
+        "DZ_ND_Combined",
     )
     _acdc_conditions = {'fog', 'night', 'rain', 'snow'}
     if dataset in _NATIVE_SHIFT_DATASETS or corruption == "original":
