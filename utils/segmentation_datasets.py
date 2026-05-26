@@ -511,6 +511,32 @@ mm_acdc_cfg_base = {
                 ]
 }
 
+# Dark Zurich: single val/night split; condition is path-encoded (no CorruptTransform).
+mm_darkzurich_cfg = {
+    'type': 'DarkZurichDataset',
+    'data_root': data_dir,  # overridden by prepare_data() per call
+    'data_prefix': {'img_path': 'rgb_anon/val/night',
+                    'seg_map_path': 'gt/val/night'},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+
+# Nighttime Driving: Cityscapes-style suffix + gtCoarse_daytime_trainvaltest folder.
+mm_nightdriving_cfg = {
+    'type': 'NighttimeDrivingDataset',
+    'data_root': data_dir,
+    'data_prefix': {'img_path': 'leftImg8bit/test/night',
+                    'seg_map_path': 'gtCoarse_daytime_trainvaltest/test/night'},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+
 mm_pascalvoc20_cfg = {
     'type': 'PascalVOC20Dataset',
     'data_root': data_dir,
