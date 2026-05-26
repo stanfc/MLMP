@@ -78,6 +78,36 @@ class ACDCDataset(BaseSegDataset):
 
 
 @DATASETS.register_module()
+class DarkZurichDataset(BaseSegDataset):
+    """Dark Zurich dataset (val/night split only).
+
+    Real-world night driving images from Zurich, anonymised (faces/plates blurred).
+    Same 19 Cityscapes classes and label convention as ACDC.
+    img_suffix     = '_rgb_anon.png'
+    seg_map_suffix = '_gt_labelTrainIds.png'
+    """
+    METAINFO = dict(
+        classes=('road', 'sidewalk', 'building', 'wall', 'fence', 'pole',
+                 'traffic light', 'traffic sign', 'vegetation', 'terrain',
+                 'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train',
+                 'motorcycle', 'bicycle'),
+        palette=[[128, 64, 128], [244, 35, 232], [70, 70, 70], [102, 102, 156],
+                 [190, 153, 153], [153, 153, 153], [250, 170, 30], [220, 220, 0],
+                 [107, 142, 35], [152, 251, 152], [70, 130, 180],
+                 [220, 20, 60], [255, 0, 0], [0, 0, 142], [0, 0, 70],
+                 [0, 60, 100], [0, 80, 100], [0, 0, 230], [119, 11, 32]])
+
+    class_extensions, extentions_to_real_class_idx = get_cls_idx("utils/class_extensions/cityscapes.txt")
+
+    def __init__(self,
+                 img_suffix='_rgb_anon.png',
+                 seg_map_suffix='_gt_labelTrainIds.png',
+                 **kwargs) -> None:
+        super().__init__(
+            img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
+
+@DATASETS.register_module()
 class COCOStuffDataset(BaseSegDataset):
     """COCO-Stuff dataset.
 
@@ -498,7 +528,7 @@ mm_pascalcontect60_cfg = {
 
 
 
-def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None):
+def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None, ann_file=None):
     
     # # print everything
     # print("\n+++++++ Data Preparation +++++++")
@@ -570,6 +600,25 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
             print(f"+ Corruption '{corruption}' added to the pipeline")
         else:
             raise ValueError("LoadImageFromFile not found in the pipeline")
+
+    ### override ann_file (used by bash/v20_acdc_matched/ to load a deterministic
+    ### subset split for cross-dataset comparability). VOC20/VOC21 only.
+    ### mmseg joins data_root with ann_file, so we accept either a relative path
+    ### or a full path that includes data_root and normalise to relative.
+    if ann_file is not None:
+        if dataset not in ("PascalVOC20Dataset", "PascalVOC21Dataset"):
+            print(f"+++ ann_file override ignored: {dataset} does not use ann_file")
+        else:
+            ann_file_rel = ann_file
+            if ann_file_rel.startswith(data_dir):
+                ann_file_rel = ann_file_rel[len(data_dir):]
+            elif osp.isabs(ann_file_rel):
+                try:
+                    ann_file_rel = osp.relpath(ann_file_rel, data_dir)
+                except ValueError:
+                    pass
+            mm_config['ann_file'] = ann_file_rel
+            print(f"+++ ann_file overridden -> {ann_file_rel}")
 
     ### bulid the dataset from the config using mmseg registry
     dataset = DATASETS.build(mm_config)
