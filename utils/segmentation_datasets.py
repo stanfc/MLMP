@@ -627,6 +627,10 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
         mm_config = copy.deepcopy(mm_pascalcontect59_cfg)
     elif dataset == "PascalContext60Dataset":
         mm_config = copy.deepcopy(mm_pascalcontect60_cfg)
+    elif dataset == "DarkZurichDataset":
+        mm_config = copy.deepcopy(mm_darkzurich_cfg)
+    elif dataset == "NighttimeDrivingDataset":
+        mm_config = copy.deepcopy(mm_nightdriving_cfg)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
     
@@ -640,9 +644,13 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
 
     ### add corruption to the pipline
     # Find the index of 'LoadImageFromFile' in the pipeline
-    # ACDC: condition is encoded in the data path already — no synthetic transform needed
+    # Native-shift datasets encode the condition in the data path itself
+    # (no synthetic CorruptTransform needed).
+    _NATIVE_SHIFT_DATASETS = (
+        "ACDCDataset", "DarkZurichDataset", "NighttimeDrivingDataset",
+    )
     _acdc_conditions = {'fog', 'night', 'rain', 'snow'}
-    if dataset == "ACDCDataset" or corruption == "original":
+    if dataset in _NATIVE_SHIFT_DATASETS or corruption == "original":
         print("No corruption added to the pipeline")
     else:
         load_image_index = next(
