@@ -8,6 +8,7 @@ from mmcv.transforms.processing import Resize
 
 from mmengine.registry import TRANSFORMS
 from mmengine.registry import DATASETS
+from mmseg.registry import DATASETS as MMSEG_DATASETS
 import mmengine.fileio as fileio
 
 from mmseg.datasets import BaseSegDataset
@@ -77,6 +78,7 @@ class ACDCDataset(BaseSegDataset):
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
 
 
+@MMSEG_DATASETS.register_module(force=True)  # override mmseg builtin (no class_extensions)
 @DATASETS.register_module()
 class DarkZurichDataset(BaseSegDataset):
     """Dark Zurich dataset (val/night split only).
@@ -85,6 +87,10 @@ class DarkZurichDataset(BaseSegDataset):
     Same 19 Cityscapes classes and label convention as ACDC.
     img_suffix     = '_rgb_anon.png'
     seg_map_suffix = '_gt_labelTrainIds.png'
+
+    Registered with force=True to mmseg's DATASETS because mmseg has a builtin
+    DarkZurichDataset that gets auto-imported. The builtin lacks class_extensions
+    (required by the --class_extensions flag in main_continual.py).
     """
     METAINFO = dict(
         classes=('road', 'sidewalk', 'building', 'wall', 'fence', 'pole',
@@ -102,6 +108,36 @@ class DarkZurichDataset(BaseSegDataset):
     def __init__(self,
                  img_suffix='_rgb_anon.png',
                  seg_map_suffix='_gt_labelTrainIds.png',
+                 **kwargs) -> None:
+        super().__init__(
+            img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
+
+@DATASETS.register_module()
+class NighttimeDrivingDataset(BaseSegDataset):
+    """Nighttime Driving Test dataset (Dai & Van Gool, ICCV 2018).
+
+    Real-world night driving images with coarse Cityscapes-style GT.
+    Same 19 Cityscapes classes and label convention as Cityscapes.
+    img_suffix     = '_leftImg8bit.png'
+    seg_map_suffix = '_gtCoarse_labelTrainIds.png'
+    """
+    METAINFO = dict(
+        classes=('road', 'sidewalk', 'building', 'wall', 'fence', 'pole',
+                 'traffic light', 'traffic sign', 'vegetation', 'terrain',
+                 'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train',
+                 'motorcycle', 'bicycle'),
+        palette=[[128, 64, 128], [244, 35, 232], [70, 70, 70], [102, 102, 156],
+                 [190, 153, 153], [153, 153, 153], [250, 170, 30], [220, 220, 0],
+                 [107, 142, 35], [152, 251, 152], [70, 130, 180],
+                 [220, 20, 60], [255, 0, 0], [0, 0, 142], [0, 0, 70],
+                 [0, 60, 100], [0, 80, 100], [0, 0, 230], [119, 11, 32]])
+
+    class_extensions, extentions_to_real_class_idx = get_cls_idx("utils/class_extensions/cityscapes.txt")
+
+    def __init__(self,
+                 img_suffix='_leftImg8bit.png',
+                 seg_map_suffix='_gtCoarse_labelTrainIds.png',
                  **kwargs) -> None:
         super().__init__(
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
