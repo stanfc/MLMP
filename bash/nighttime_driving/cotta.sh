@@ -13,7 +13,7 @@ DATASET=NighttimeDrivingDataset
 DATA_DIR="data/NighttimeDrivingTest/"
 INIT_RESIZE="1120 560"
 CONDITIONS="night"
-WORKERS=4
+WORKERS=1
 
 # Method Configuration
 METHOD="cotta"

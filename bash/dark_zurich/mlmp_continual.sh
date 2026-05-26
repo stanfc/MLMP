@@ -10,7 +10,7 @@ DATASET=DarkZurichDataset
 DATA_DIR="data/Dark_Zurich_val_anon/"
 INIT_RESIZE="1120 560"
 CONDITIONS="night"
-WORKERS=4
+WORKERS=1
 
 # Method Configuration
 METHOD="mlmp_continual"

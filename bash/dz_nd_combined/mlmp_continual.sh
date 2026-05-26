@@ -10,7 +10,7 @@ DATASET=DZ_ND_Combined
 DATA_DIR="data/"  # ignored in combined-stream mode
 INIT_RESIZE="1120 560"
 CONDITIONS="dark_zurich nighttime_driving"
-WORKERS=4
+WORKERS=1
 
 # Method Configuration
 METHOD="mlmp_continual"
