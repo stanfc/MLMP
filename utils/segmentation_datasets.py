@@ -636,7 +636,10 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
     
     ### add specified configs
     
-    mm_config['data_root'] = data_dir
+    # DZ_ND_Combined sets data_root per-condition in its dispatch branch;
+    # the blanket assignment would clobber it. Other datasets behave as before.
+    if dataset != "DZ_ND_Combined":
+        mm_config['data_root'] = data_dir
     mm_config['pipeline'][2]['resize'] = init_resize
     mm_config['pipeline'][2]['patch_size'] = patch_size
     mm_config['pipeline'][2]['patch_stride'] = patch_stride
