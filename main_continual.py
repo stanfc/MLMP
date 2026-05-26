@@ -59,7 +59,9 @@ def argparser():
         choices=('ACDCDataset', 'CityscapesDataset',
                  'COCOStuffDataset', 'COCOObjectDataset',
                  'PascalVOC20Dataset', 'PascalVOC21Dataset',
-                 'PascalContext59Dataset', 'PascalContext60Dataset'),
+                 'PascalContext59Dataset', 'PascalContext60Dataset',
+                 'DarkZurichDataset', 'NighttimeDrivingDataset',
+                 'DZ_ND_Combined'),
     )
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument(
@@ -137,6 +139,11 @@ def argparser():
     parser.add_argument('--runtime_calculation', action='store_true')
     parser.add_argument('--debug', action='store_true',
                         help='Process only 5 batches per condition for quick testing')
+    parser.add_argument('--ann_file', type=str, default=None,
+                        help='Override dataset ann_file path (e.g., a VOC subset split). '
+                             'Only affects PascalVOC20Dataset / PascalVOC21Dataset; '
+                             'ignored for ACDC / Cityscapes / COCO. Applied to stream '
+                             'loaders only -- source-stat loaders still use full split.')
 
     return parser
 
@@ -290,6 +297,26 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--recovery_warmup', type=int, default=50,
                             help='Number of batches before recovery can fire')
 
+    # --- SAR-DivGate-Continual (SAR base + DivGate replaces hard recovery) ---
+    elif method == 'sar_divgate_continual':
+        # SAR-side
+        parser.add_argument('--e_margin', type=float, default=1.8,
+                            help='Per-sample mean entropy threshold; samples > this are skipped')
+        parser.add_argument('--sam_rho', type=float, default=0.05,
+                            help='SAM perturbation radius (default 0.05 from SAR paper)')
+        # DivGate-side
+        parser.add_argument('--h_threshold', type=float, default=1.6,
+                            help='H_margin >= this -> aggressive mode (rst=0)')
+        parser.add_argument('--h_warning', type=float, default=1.4,
+                            help='h_warning <= H_margin < h_threshold -> cautious; '
+                                 '< h_warning -> brake')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+        parser.add_argument('--cautious_rst', type=float, default=0.01,
+                            help='Stochastic restore probability in cautious mode')
+        parser.add_argument('--brake_rst', type=float, default=0.05,
+                            help='Stochastic restore probability in brake mode')
+
     # --- EATA-Continual (Efficient + Anti-forgetting, ICML 2022) ---
     elif method == 'eata_continual':
         parser.add_argument('--e_margin', type=float, default=1.198,
@@ -301,6 +328,15 @@ def add_method_specific_args(parser, method):
                             help='Weight on EWC penalty in total loss')
         parser.add_argument('--fisher_size', type=int, default=2000,
                             help='Number of clean source samples used to estimate Fisher')
+
+    # --- DELTA-Continual (DOT-only, ICLR 2023) ---
+    elif method == 'delta_continual':
+        parser.add_argument('--dot_momentum', type=float, default=0.9,
+                            help='EMA decay for class-frequency tracker. '
+                                 'Higher = slower frequency updates.')
+        parser.add_argument('--dot_alpha', type=float, default=1.0,
+                            help='Exponent on inverse class frequency for the per-pixel '
+                                 'weight. 0 = plain TENT, 1 = full inverse-frequency.')
 
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
@@ -369,7 +405,8 @@ def main(args):
         args.patch_size, args.patch_stride,
         corruption=conditions[0],
         batch_size=args.batch_size, num_workers=args.workers,
-        shuffle=False
+        shuffle=False,
+        ann_file=args.ann_file,
     )
 
     if args.class_extensions and first_loader.dataset.class_extensions is not None:
@@ -483,7 +520,8 @@ def main(args):
                 args.patch_size, args.patch_stride,
                 corruption=condition,
                 batch_size=args.batch_size, num_workers=args.workers,
-                shuffle=False
+                shuffle=False,
+                ann_file=args.ann_file,
             )
 
             results = []

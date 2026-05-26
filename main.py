@@ -67,7 +67,9 @@ def argparser():
             'COCOStuffDataset', 'COCOObjectDataset', 'CityscapesDataset',
             'ACDCDataset',
             'PascalVOC20Dataset', 'PascalVOC21Dataset',
-            'PascalContext59Dataset', 'PascalContext60Dataset'
+            'PascalContext59Dataset', 'PascalContext60Dataset',
+            'DarkZurichDataset', 'NighttimeDrivingDataset',
+            'DZ_ND_Combined',
         ),
         help='Which dataset to load'
     )
@@ -198,6 +200,15 @@ def argparser():
         '--continual',
         action='store_true',
         help='Run continual TTA: corruptions are streamed sequentially without model reset between batches or corruptions'
+    )
+    parser.add_argument(
+        '--ann_file',
+        type=str,
+        default=None,
+        help='Override dataset ann_file path (e.g., a VOC subset split). '
+             'Only affects PascalVOC20Dataset / PascalVOC21Dataset; ignored for '
+             'ACDC / Cityscapes / COCO. Applied to stream loaders only -- '
+             'source-stat loaders still use the full split.'
     )
 
     return parser
@@ -359,7 +370,8 @@ def main_continual(args):
     _first_loader, org_classes = segmentation_datasets.prepare_data(
         args.dataset, args.data_dir, args.init_resize,
         args.patch_size, args.patch_stride, corruption=args.corruptions_list[0],
-        batch_size=args.batch_size, num_workers=args.workers)
+        batch_size=args.batch_size, num_workers=args.workers,
+        ann_file=args.ann_file)
     if args.class_extensions and _first_loader.dataset.class_extensions is not None:
         args.classes = _first_loader.dataset.class_extensions
     else:
@@ -384,7 +396,8 @@ def main_continual(args):
             data_loader, org_classes = segmentation_datasets.prepare_data(
                 args.dataset, args.data_dir, args.init_resize,
                 args.patch_size, args.patch_stride, corruption=corruption,
-                batch_size=args.batch_size, num_workers=args.workers)
+                batch_size=args.batch_size, num_workers=args.workers,
+                ann_file=args.ann_file)
 
             if args.class_extensions and data_loader.dataset.class_extensions is not None:
                 ext_classes = data_loader.dataset.class_extensions
@@ -519,8 +532,9 @@ def main(args):
     
     for c_idx, corruption in enumerate(args.corruptions_list):
         data_loader, org_classes = segmentation_datasets.prepare_data(args.dataset, args.data_dir, args.init_resize,
-                                                                  args.patch_size, args.patch_stride, corruption=corruption, 
-                                                                  batch_size=args.batch_size, num_workers=args.workers)
+                                                                  args.patch_size, args.patch_stride, corruption=corruption,
+                                                                  batch_size=args.batch_size, num_workers=args.workers,
+                                                                  ann_file=args.ann_file)
         
         # Check if the extensions of classes should be used
         if args.class_extensions and data_loader.dataset.class_extensions is not None:
