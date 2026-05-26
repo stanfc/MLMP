@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟢 Current status (2026-05-19)**:
-> - **ACDC win**: TENT-DivGate (h_thr=1.6, cau_rst=0.01) mean=31.59, beats MLMP-episodic 30.6 by +1.0 mIoU, stable 150R.
-> - **Cityscapes + VOC20 negative**: continual TTA collapses or stays below source on synthetic ImageNet-C corruptions. **Root cause: adaptation headroom**. ACDC headroom = 7.3 mIoU works; Cityscapes 1.3 / VOC20 4.6 don't. See [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §4 (Cityscapes), §5 (VOC20).
-> - **Next**: SAR-Continual and EATA-Continual implemented (`adapt/sar_continual.py`, `adapt/eata_continual.py`, `adapt/sam.py`), bash scripts ready for v20 and ACDC, smoke-tested but not yet run for full experiments. Design spec: [docs/2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md). EXPERIMENT_STATUS §6 has concrete run commands.
+> **🟢 Current status (2026-05-25)**:
+> - **ACDC win (unchanged)**: TENT-DivGate (h_thr=1.6, cau_rst=0.01) mean=31.59, beats MLMP-episodic 30.6 by +1.0 mIoU, stable 150R.
+> - **SAR ran**: ACDC mean=30.32 with W-shape dips (peak 33.38 > TENT-DivGate but unstable); VOC20 weather ~70.9 ≈ No-Adapt. **Direction bug found + fixed**: recovery was `loss_ma > e_0` should be `<` per SAR paper; `E_0` rescaled `0.7→0.1` for our 19-20 class setting. See [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §7.
+> - **SAR-DivGate hybrid (Phase J) implemented, NOT YET RUN**: SAR's SAM + reliable filter + DivGate's 3-tier graded restore (replaces SAR's hard recovery). Hypothesis: SAM lifts peak, DivGate prevents SAR's W-shape dips. Spec: [docs/sar_divgate_continual_spec.md](docs/sar_divgate_continual_spec.md), impl: [adapt/sar_divgate_continual.py](adapt/sar_divgate_continual.py), bash for ACDC/v20/Cityscapes ready. **EXPERIMENT_STATUS §8 has run commands.**
+> - **`bash/v20_acdc_matched/` folder built (Phase K)**: 8 method scripts on VOC20 deterministic subset (101 imgs × 4 corruptions = 404/round ≈ ACDC's 406) for direct ACDC↔VOC20 trajectory overlay. Spec: [docs/v20_acdc_matched_spec.md](docs/v20_acdc_matched_spec.md). Smoke-tested, not run for real yet. New CLI arg `--ann_file` plumbed through `main_continual.py` + `main.py`.
+> - **Cityscapes + VOC20 negative (unchanged)**: continual TTA stays below source on synthetic ImageNet-C corruptions. **Root cause: adaptation headroom**. ACDC headroom = 7.3 mIoU works; Cityscapes 1.3 / VOC20 4.6 don't.
+> - **Next priority**: `bash bash/ACDC_10_round/sar_divgate_continual.sh` (Phase J test, GPU 2).
 >
-> **For the full research arc (every method tried, what we learned, current state), read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** That file is the canonical entry point — this guide covers conventions and impl details, not narrative.
+> **For the full research arc, read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** Current header pointers: §7 (SAR results + bug fix), §8 (SAR-DivGate), §9 (v20_acdc_matched), §11 (concrete next actions).
 
 ## Environment Setup
 
@@ -109,7 +112,10 @@ The full narrative — what each method tried, why it failed or partially worked
 | `cma_proto_continual` | `adapt/cma_proto_continual.py` | [cma_proto_continual_spec.md](docs/cma_proto_continual_spec.md) | **Collapsed**. Frozen source prototype delayed collapse to R54 but didn't prevent it — confirmation bias remains because pseudo-label `ĉ_i` still comes from the current model. Motivated `proposal_after_cma.md`. |
 | `cma_layered_continual` | `adapt/cma_layered_continual.py` | [cma_layered_continual_spec.md](docs/cma_layered_continual_spec.md) | **Stable but flat**. Layer-stratified restoration (Direction A) caps at ~24 mIoU regardless of cutoff/rate combination. Negative result: defense moved to optimizer side cannot raise CMA's natural ceiling. |
 | `cma_divgate_continual` | `adapt/cma_divgate_continual.py` | [cma_divgate_continual_spec.md](docs/cma_divgate_continual_spec.md) | **Partial success**. Buffer-N H_margin gate (Direction B) prevented dead state (mean 21.21 vs CMA's 5.54), but base loss ceiling (CMA peak 27.4) caps overall mean below No Adapt 23.34. |
-| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Best method. All 150R complete.** Baseline (h_thr=1.8): mean=30.14, R150=29.02. After cautious_rst sweep + threshold tune (h_thr=1.6, h_warn=1.4, cau_rst=0.01): **mean=31.59, peak=32.96@R27, R150=31.34**. Beats MLMP-episodic by +1.0 mIoU, stable to R150. **Next**: h_threshold sweep (1.7/1.8/2.0). |
+| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Best confirmed method. All 150R complete.** Baseline (h_thr=1.8): mean=30.14, R150=29.02. After cautious_rst sweep + threshold tune (h_thr=1.6, h_warn=1.4, cau_rst=0.01): **mean=31.59, peak=32.96@R27, R150=31.34**. Beats MLMP-episodic by +1.0 mIoU, stable to R150. |
+| `sar_continual` | `adapt/sar_continual.py` (+ `adapt/sam.py`) | [2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md) | **Ran, partial win.** ACDC (post-bug-fix not yet rerun; existing data is pre-fix `>` direction): mean=30.32, peak=33.38@R15, R150=25.31 — **higher peak than TENT-DivGate but W-shape dips at R50/R100/R150**. VOC20 weather: ~70.9 ≈ No-Adapt 70.79 (headroom-limited). **Direction bug**: recovery was `>` should be `<` per paper; `E_0` rescaled `0.7→0.1`. |
+| `eata_continual` | `adapt/eata_continual.py` | [2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md) | **Implemented, never run** (deferred behind SAR results). Pre-stream Fisher EWC + reliable+non-redundant filter. |
+| **`sar_divgate_continual`** | `adapt/sar_divgate_continual.py` | [sar_divgate_continual_spec.md](docs/sar_divgate_continual_spec.md) | **Implemented, NOT YET RUN (Phase J, next priority).** Hybrid: SAR's SAM + reliable filter, with DivGate's 3-tier graded stochastic restore replacing SAR's hard recovery. Hypothesis: SAM peak (33.38) + DivGate stability (R150 31.34) → ideal mean ≥ 32.5 on ACDC. |
 
 The original three-direction reframing is in [proposal_after_cma.md](proposal_after_cma.md) (written after CMA-Proto failed). Direction A = layered restoration; Direction B = diversity gate; Direction C (two-timescale meta-adapt) is still deferred.
 
@@ -305,7 +311,9 @@ Three backbone modes, all using ViT-L/14:
 | `cma_proto_continual.sh` | cma_proto_continual | main_continual.py | LR=1e-5, steps=1, batch=1, λ_cma=1.0, λ_src=1.0, λ_tgt=0.5, ema=0.999, src=fog |
 | `cma_layered_continual.sh` | cma_layered_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, early/mid/late_rst=0.001/0.01/0.05, cutoffs=8/16 (defaults; rates in the script have been tuned during ablation) |
 | `cma_divgate_continual.sh` | cma_divgate_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05 |
-| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, no top-K — pure TENT loss. **Best confirmed**: h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. **Script currently set to h_thr=1.8, h_warn=1.4, cau_rst=0.01** for the h_threshold sweep (SAVE_DIR uses `_cau_threshold_${H_THRESHOLD}/` suffix). |
+| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, no top-K — pure TENT loss. **Best confirmed**: h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. |
+| `sar_continual.sh` | sar_continual | main_continual.py | LR=1e-5, steps=1, e_margin=1.8, sam_rho=0.05, E_0=0.1 (post-fix `<` direction), ema_factor=0.9, recovery_warmup=50 |
+| **`sar_divgate_continual.sh`** | sar_divgate_continual | main_continual.py | LR=1e-5, steps=1, e_margin=1.8, sam_rho=0.05, h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. **Phase J, next priority.** |
 
 Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the script). Multiple runs of the same method with different hyperparameters use suffixes like `cma_layered_continual_rate__0.001_0.05` or `cma_divgate_continual_brake_0.005`.
 
@@ -317,7 +325,9 @@ Mirrors the ACDC continual protocol but on CityscapesDataset (val split, 500 ima
 
 | Script | Method | Key difference from ACDC |
 |--------|--------|--------------------------|
-| `tent_divgate_continual.sh` | tent_divgate_continual | 15 corruptions × 500 imgs/round ≈ 7500/round (vs ACDC 8012) |
+| `tent_divgate_continual.sh` | tent_divgate_continual | 15 corruptions × 500 imgs/round ≈ 7500/round (vs ACDC 406) |
+| `sar_continual.sh` | sar_continual | weather-5 default, post-fix `E_0=0.1`, never run |
+| `sar_divgate_continual.sh` | sar_divgate_continual | Phase J, weather-5 default, never run |
 
 **Corruption list** (`CORRUPTIONS_LIST` variable at top of script, ImageNet-C standard order):
 ```
@@ -329,6 +339,62 @@ elastic_transform  pixelate  jpeg_compression       # digital
 Comment out individual lines to run a subset (e.g., weather-only). Override via env vars identical to ACDC convention.
 
 Results saved to `save/CityscapesDataset/{method_name}/results_all_rounds.txt`. Columns: `Round, gaussian_noise, ..., jpeg_compression, Mean_mIoU`.
+
+---
+
+## VOC20 ACDC-Matched Scripts (`bash/v20_acdc_matched/`)
+
+**Purpose**: VOC20 with a deterministic 101-img × 4-corruption = 404/round subset, matching ACDC's 406/round so trajectories can be overlaid directly. See [docs/v20_acdc_matched_spec.md](docs/v20_acdc_matched_spec.md).
+
+**Subset mechanism**:
+- `scripts/make_voc_subset.py --n 101 --seed 0` → writes `data/VOC/VOC2012/ImageSets/Segmentation/val_subset_101_seed0.txt` (deterministic: `random.Random(seed) + sorted()`)
+- Each bash script auto-generates the subset file if missing
+- `--ann_file` CLI arg (added to both `main.py` and `main_continual.py`) overrides mmseg `ann_file`; auto-strips `data_root` prefix so both relative and absolute paths work
+- Passed to **stream loaders only** (not source-stat loaders for EATA / DPCore / CMA-Proto)
+
+**Default 4 corruptions** (mapped to ACDC conditions; comment / uncomment in `CORRUPTIONS_ARRAY` to swap):
+- `snow` ↔ ACDC snow, `fog` ↔ ACDC fog, `frost` ↔ ACDC rain, `contrast` ↔ ACDC night
+
+**8 scripts**, mirroring methods that have ACDC counterparts:
+| Script | Method | Notes |
+|---|---|---|
+| `no_adapt.sh` | tent_continual (no --adapt) | |
+| `tent_continual.sh` | tent_continual | |
+| `mlmp_continual.sh` | mlmp_continual | |
+| `cotta.sh` | cotta | mt=0.999, rst=0, ap=0.92, aug_n=32 |
+| `mlmp_episodic.sh` | mlmp | uses **main.py**, LR=1e-3 |
+| `mlmp_divgate_continual.sh` | mlmp_divgate_continual | h_thr=1.6 |
+| `tent_divgate_continual.sh` | tent_divgate_continual | h_thr=1.6, cau_rst=0.01 |
+| `sar_continual.sh` | sar_continual | e_margin=1.8, sam_rho=0.05, E_0=0.1 (post-fix) |
+
+Results saved to `save/PascalVOC20Dataset/v20_acdc_matched/{method_name}/`. Smoke-verified (no_adapt config, 1R, --debug); none have been run for real yet.
+
+---
+
+## Dark Zurich / Nighttime Driving / Combined Scripts
+
+Three new bash folders (21 scripts total) targeting **native night-driving CTTA** — both datasets are real adverse-condition images (no synthetic CorruptTransform), Cityscapes 19-class compatible. See [docs/dz_nd_scripts_spec.md](docs/dz_nd_scripts_spec.md) for design and [docs/dz_nd_scripts_plan.md](docs/dz_nd_scripts_plan.md) for implementation history.
+
+| Folder | DATASET | DATA_DIR | CONDITIONS | imgs/round | Purpose |
+|---|---|---|---|---|---|
+| `bash/dark_zurich/` | DarkZurichDataset | data/Dark_Zurich_val_anon/ | night | 50 | Single-domain stream A |
+| `bash/nighttime_driving/` | NighttimeDrivingDataset | data/NighttimeDrivingTest/ | night | 50 | Single-domain stream B (external validity) |
+| `bash/dz_nd_combined/` | DZ_ND_Combined | data/ (ignored) | dark_zurich nighttime_driving | 100 | 2-sub-dataset native-shift CTTA |
+
+Each folder has the same 7 method scripts: `no_adapt`, `mlmp_episodic`, `mlmp_continual`, `cotta`, `tent_continual`, `tent_divgate_continual`, `sar_continual`.
+
+**Key hyperparameter overrides vs `bash/ACDC_10_round/` source files**:
+- `cotta.sh`: `RST=0.01` (ACDC source has `RST=0.00` — stochastic-restoration bug)
+- `tent_continual.sh`: `STEPS=1`, `CONTINUAL_ROUNDS=150` (ACDC source has legacy `10/10`)
+- `tent_divgate_continual.sh`: `H_THRESHOLD=1.6` (ACDC source has `1.8`; `1.6` is CLAUDE.md best-confirmed value)
+
+Combined-mode internals: `args.data_dir` is ignored; `prepare_data()` dispatches per-condition with hardcoded sub-paths (`mm_config['data_root']` set inside the `DZ_ND_Combined` branch in [utils/segmentation_datasets.py](utils/segmentation_datasets.py)). Within each round, conditions iterate block-by-block in declaration order (`dark_zurich → nighttime_driving`).
+
+**Smoke-verified** (1R, no_adapt): DZ=20.24 mIoU, ND=31.01 mIoU, Combined header `Round, dark_zurich, nighttime_driving, Mean_mIoU` with values 20.24/31.01/25.62 (arithmetic mean confirmed correct).
+
+Note: `DarkZurichDataset` is also defined in mmseg's builtin `mmseg.datasets.dark_zurich`. Our class is registered with `force=True` to mmseg's `DATASETS` registry to override the builtin (which lacks `class_extensions`). The dual decorator (`@MMSEG_DATASETS.register_module(force=True)` + `@DATASETS.register_module()`) ensures lookups resolve to our class.
+
+Results saved to `save/{DarkZurichDataset|NighttimeDrivingDataset|DZ_ND_Combined}/{method}/results_all_rounds.txt`. Single-condition folders have columns `Round, night, Mean_mIoU`; combined has `Round, dark_zurich, nighttime_driving, Mean_mIoU`.
 
 ---
 
