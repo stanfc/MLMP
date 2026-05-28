@@ -590,7 +590,7 @@ mm_pascalcontect60_cfg = {
 
 
 
-def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None, ann_file=None):
+def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None, ann_file=None, corruption_severity=5):
     
     # # print everything
     # print("\n+++++++ Data Preparation +++++++")
@@ -679,7 +679,7 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
         if load_image_index is not None:
             corrupt_transform = {
                 'type': 'CorruptTransform',
-                'corruption_severity': 5,
+                'corruption_severity': corruption_severity,
                 'corruption_name': corruption,
                 'cache_dir': corruption_cache_dir or osp.join(osp.dirname(data_dir.rstrip('/')), '.cache', 'corruptions'),
             }
