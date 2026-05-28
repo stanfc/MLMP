@@ -78,6 +78,8 @@ def argparser():
             'The full sequence is repeated continual_rounds times.'
         )
     )
+    parser.add_argument('--severity', type=int, default=5, choices=[1, 2, 3, 4, 5],
+                        help='ImageNet-C corruption severity (synthetic datasets only); 5 matches prior behavior')
     parser.add_argument('--class_extensions', action='store_true')
 
     # ----------------------------------------
@@ -407,6 +409,7 @@ def main(args):
         batch_size=args.batch_size, num_workers=args.workers,
         shuffle=False,
         ann_file=args.ann_file,
+        corruption_severity=args.severity,
     )
 
     if args.class_extensions and first_loader.dataset.class_extensions is not None:
@@ -441,7 +444,8 @@ def main(args):
             args.patch_size, args.patch_stride,
             corruption=src_corruption,
             batch_size=args.batch_size, num_workers=args.workers,
-            shuffle=False
+            shuffle=False,
+            corruption_severity=args.severity,
         )
         adapt_method.obtain_src_stat(src_loader)
         del src_loader
@@ -465,7 +469,8 @@ def main(args):
             args.patch_size, args.patch_stride,
             corruption=src_corruption,
             batch_size=args.batch_size, num_workers=args.workers,
-            shuffle=False
+            shuffle=False,
+            corruption_severity=args.severity,
         )
         adapt_method.obtain_src_fisher(src_loader)
         del src_loader
@@ -487,7 +492,8 @@ def main(args):
             args.patch_size, args.patch_stride,
             corruption=src_corruption,
             batch_size=args.batch_size, num_workers=args.workers,
-            shuffle=False
+            shuffle=False,
+            corruption_severity=args.severity,
         )
         adapt_method.obtain_src_prototypes(src_loader)
         del src_loader
@@ -522,6 +528,7 @@ def main(args):
                 batch_size=args.batch_size, num_workers=args.workers,
                 shuffle=False,
                 ann_file=args.ann_file,
+                corruption_severity=args.severity,
             )
 
             results = []
