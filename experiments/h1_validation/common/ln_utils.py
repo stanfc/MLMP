@@ -4,17 +4,27 @@ import torch
 import torch.nn as nn
 
 
-def flatten_grads(ln_params: list[nn.Parameter]) -> torch.Tensor:
+def flatten_grads(ln_params: list[nn.Parameter], strict: bool = False) -> torch.Tensor:
     """Concatenate .grad of each param into one fp32 1-D tensor.
 
-    Iteration order is the order given. Raises RuntimeError if any .grad
-    is None (the caller forgot to backward, or zero'd grads after backward).
+    Iteration order is the order given.
+
+    A param may have .grad=None if it is in the leaf set (requires_grad=True)
+    but does not actually participate in the loss's computation graph — for
+    example NA-CLIP's `ln_post` is not on the path that produces patch-token
+    logits. By default we treat None as a zero gradient (mathematically the
+    same: the loss is constant in that param so ∂L/∂p = 0).
+
+    Set strict=True to raise on None instead — useful when debugging.
     """
     chunks = []
     for i, p in enumerate(ln_params):
         if p.grad is None:
-            raise RuntimeError(f"ln_params[{i}] has .grad=None")
-        chunks.append(p.grad.detach().reshape(-1).float())
+            if strict:
+                raise RuntimeError(f"ln_params[{i}] has .grad=None")
+            chunks.append(torch.zeros(p.numel(), dtype=torch.float32, device=p.device))
+        else:
+            chunks.append(p.grad.detach().reshape(-1).float())
     return torch.cat(chunks)
 
 
