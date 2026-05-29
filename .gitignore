@@ -108,3 +108,11 @@ venv.bak/
 .qualitative/
 .save/
 *_log*.txt
+
+# H1 validation experiments — keep folders but ignore generated artifacts
+experiments/h1_validation/results/exp1/all.csv
+experiments/h1_validation/results/exp1/raw/
+experiments/h1_validation/results/exp1/figs/
+experiments/h1_validation/results/exp3/all.csv
+experiments/h1_validation/results/exp3/raw/
+experiments/h1_validation/results/exp3/figs/
