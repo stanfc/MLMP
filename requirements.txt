@@ -76,3 +76,4 @@ urllib3==2.2.3
 wcwidth==0.2.13
 yapf==0.40.2
 zipp==3.21.0
+einops==0.8.2
