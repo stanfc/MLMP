@@ -116,3 +116,24 @@ experiments/h1_validation/results/exp1/figs/
 experiments/h1_validation/results/exp3/all.csv
 experiments/h1_validation/results/exp3/raw/
 experiments/h1_validation/results/exp3/figs/
+
+# ── Experiment artifacts (figures, result tables, weights, logs) ──
+figures/
+results/
+results_summary.csv
+results_table.tex
+.weights/
+logs/
+save_tekai/
+
+# Claude Code local state / memory
+.claude/
+
+# Image artifacts in general — kept LOCAL, never pushed. BUT keep the
+# ImageNet-C frost textures (utils/imagecorruptions/frost/*) — runtime dep.
+*.png
+*.jpg
+*.jpeg
+*.svg
+!utils/imagecorruptions/frost/
+!utils/imagecorruptions/frost/*

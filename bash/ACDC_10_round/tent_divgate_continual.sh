@@ -8,11 +8,11 @@
 # See docs/tent_divgate_continual_spec.md for the full design.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=2
 
 # Dataset Configuration
 DATASET=ACDCDataset
-DATA_DIR="data/ACDC/"
+DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 WORKERS=4
@@ -27,20 +27,16 @@ BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# Diversity gate
-# - h_threshold lowered from proposal default 1.8 -> 1.6 to extend
-#   aggressive-mode window and capture more of TENT's natural peak
-# - h_warning raised from default 1.2 -> 1.4 so brake mode actually
-#   fires as a safety net (at default 1.2 it never triggered in any
-#   prior DivGate run -- gate behaved as 2-tier aggressive/cautious)
+# Diversity gate (proposal_after_cma.md §2.3 defaults)
 H_THRESHOLD=1.8       # H_margin >= this  -> aggressive (rst=0)
-H_WARNING=1.4         # h_warning <= H < h_threshold -> cautious; < h_warning -> brake
+H_WARNING=1.5         # h_warning <= H < h_threshold -> cautious
 MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
-CAUTIOUS_RST=0.01
-BRAKE_RST=0.05
+CAUTIOUS_RST=0.005
+BRAKE_RST=0.02
+
 
 CONTINUAL_ROUNDS=150
-SAVE_DIR="save/${DATASET}/${METHOD}_cau_threshold_${H_THRESHOLD}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_caut_0.005_brake_0.02/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -69,4 +65,9 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --brake_rst $BRAKE_RST \
                         \
                         --save_dir $SAVE_DIR \
-                        --class_extensions
+                        --class_extensions \
+&& python plot_results.py \
+        --runs $SAVE_DIR \
+              save/${DATASET}/tent_divgate_continual_step_1 \
+        --labels "caut_0.005_brake_0.02" "previous (caut_0.008_brake_0.01)" \
+        --out_dir figures/caut_0.005_brake_0.02

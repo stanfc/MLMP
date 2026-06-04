@@ -159,29 +159,45 @@ class CLIPARTT:
         text_feat = self.extract_text_embeddings(classes, [REFERENCE_PROMPT], average=False).squeeze()
         loss_report = []
         for _ in range(self.steps):
+            # --- Step 1: no-grad single-prompt similarity; take Top-K *per patch* ---
+            # similarity[0] shape: (B, C, w, h) where B = number of input patches.
+            # CLIPArTT's "instance" in the original paper is a single image; here we
+            # treat each patch as an instance (per-pixel prompts would blow up text
+            # encoder memory by ~ w*h = 256 times on ViT-L/14 patches).
             with torch.no_grad():
-                similarity, _, _ = self.model(x,  text_feat, True, interpolate=False)
+                similarity, _, _ = self.model(x, text_feat, True, interpolate=False)
+                probs = similarity[0].softmax(dim=1)                # (B, C, w, h)
+                patch_marginal = probs.mean(dim=[2, 3])              # (B, C)
+                _, pred_per_patch = patch_marginal.topk(self.k, dim=1)  # (B, K)
 
-           # similarity = (100.0 * image_features @ text_feat.T).softmax(dim=-1)
-            values, pred = similarity[0].topk(self.k, 1, True, True)
-            pred_flatten = pred.view(-1, self.k)
-            pred_inputs = torch.cat([self.tokenize(self.getprompt(self.k, c, classes)) for c in pred_flatten]).to(self.device)
-            # pred_inputs = pred_inputs.view(pred.shape[0],-1,pred.shape[2],pred.shape[3])
+            # --- Step 2: one combined "A or B or C" prompt per patch ---
+            pred_inputs = torch.cat([
+                self.tokenize(self.getprompt(self.k, c, classes))
+                for c in pred_per_patch
+            ]).to(self.device)                                       # (B, 77)
 
-            # Calculating the Loss
-            # cosine similarity as logits
-            logits, image_features, text_features = self.model(x,  pred_inputs, False, interpolate=False)
-            image_features = image_features[:, 1:]
-            image_features = image_features.reshape(-1, image_features.shape[-1])
-            images_similarity = image_features @ image_features.t()
-            text_features = text_features.squeeze()
-            texts_similarity = text_features @ text_features.t()
-            targets = F.softmax(  ###
+            # --- Step 3: grad forward with per-patch prompts ---
+            # model.forward() strips the CLS token from `logits` (see model.py
+            # line ~571: `logits = logits[:, :, 1:]`), so we recompute the
+            # patch-level (CLS) logits ourselves from features.
+            _, image_features, text_features = self.model(
+                x, pred_inputs, False, interpolate=False
+            )
+
+            # --- Step 4: patch-level CLIPArTT self-distillation target ---
+            # CLS token (index 0) is the patch-level image embedding.
+            cls_feat = image_features[:, 0]                          # (B, D)
+            cls_feat = cls_feat / cls_feat.norm(dim=-1, keepdim=True)
+            text_features = text_features.squeeze()                  # (B, D)
+            # patch_logits[i, j] = cosine(image_i CLS, text_j prompt)
+            patch_logits = cls_feat @ text_features.t()              # (B, B)
+
+            images_similarity = cls_feat @ cls_feat.t()              # (B, B)
+            texts_similarity = text_features @ text_features.t()     # (B, B)
+            targets = F.softmax(
                 ((images_similarity + texts_similarity) / 2) / 0.01, dim=-1
             )
-            logits = logits.reshape(-1, logits.shape[-3])
-            loss = self.cross_entropy(logits, targets,
-                                      reduction='mean')  ###
+            loss = self.cross_entropy(patch_logits, targets, reduction='mean')
 
             loss_report.append(loss.item())
 

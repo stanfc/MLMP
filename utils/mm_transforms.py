@@ -259,13 +259,50 @@ class ToTensorAndNormalize(BaseTransform):
             packed_results['gt_seg_map_patches'] = gt_seg_map_patches
             
 
-        img_meta = {}   
+        img_meta = {}
         for key in self.meta_keys:
             if key in results:
                 img_meta[key] = results[key]
         packed_results['meta'] = img_meta
 
         return packed_results
-    
+
+
+
+@TRANSFORMS.register_module()
+class RemapLabels(BaseTransform):
+    """Remap GT label IDs onto a coarser super-class index space.
+
+    Input:  gt_seg_map (np.ndarray) with original class indices, e.g. [0, 18]
+    Output: gt_seg_map with super-class indices, e.g. [0, num_super_class-1]
+
+    Args:
+        mapping: list[int] of length = num_original_classes, where
+            mapping[i] is the super-class index that original class i belongs to.
+            Special value 255 (or anything >= num_super_class) is left untouched
+            so it can serve as ignore_index.
+        ignore_index: pixels with this value are kept as-is (default 255).
+    """
+
+    def __init__(self, mapping, ignore_index=255):
+        super().__init__()
+        self.mapping = np.asarray(mapping, dtype=np.int64)
+        self.ignore_index = int(ignore_index)
+
+    def _remap(self, gt):
+        # Build remapped map; preserve ignore_index pixels.
+        remapped = np.full_like(gt, fill_value=self.ignore_index)
+        valid_mask = (gt != self.ignore_index) & (gt < len(self.mapping))
+        remapped[valid_mask] = self.mapping[gt[valid_mask]]
+        return remapped
+
+    def transform(self, results):
+        # Remap both the (resized) full GT map and any per-patch GT maps,
+        # so this transform works regardless of whether it runs before or
+        # after ResizeAndPatchify.
+        for key in ('gt_seg_map', 'gt_seg_map_patches'):
+            if key in results and results[key] is not None:
+                results[key] = self._remap(results[key])
+        return results
 
 

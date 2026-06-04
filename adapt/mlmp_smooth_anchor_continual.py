@@ -1,0 +1,374 @@
+"""
+MLMP-SmoothAnchor-Continual: MLMP base loss + smooth (continuous) anchor-lag
+diversity gate (CTTA, no reset).
+
+Combines:
+  - MLMP loss: multi-prompt × multi-level entropy + ILE (alpha_cls × CLS entropy),
+    same as adapt/mlmp_continual.py.
+  - SmoothAnchor gate: lag(H) = lag_scale / (H - h_floor), bounded to [1, max_lag].
+    H_margin >= h_ceil  -> no restore (rst = 0).
+    H_margin <= h_floor -> restore toward frozen source.
+    Else restore toward LN snapshot from lag(H) batches ago, at fixed rate `rst`.
+
+H_margin signal is computed from the ensemble (mean across prompt templates) of
+the multi-level adapt logits — single coherent class distribution per batch.
+"""
+
+import time
+import copy
+import math
+from collections import deque
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+from ovss import load_ovss
+from utils.misc import load_prompts_from_yaml, print_clip_parameters, print_optimizer_parameters
+
+REFERENCE_PROMPT = 'a photo of a {}'
+
+
+class MLMPSmoothAnchorContinual:
+    """MLMP base + continuous H_margin->anchor_lag mapping."""
+
+    def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
+                 vision_outputs=(-1,), alpha_cls=0.0,
+                 prompt_integration='loss',
+                 h_ceil=1.8, h_floor=1.5,
+                 lag_scale=90.0,
+                 max_lag=3000,
+                 rst=0.005,
+                 monitor_interval=50,
+                 prompt_dir='prompts.yaml',
+                 runtime_calculation=False, device='cpu'):
+        self.ovss_type = ovss_type
+        self.ovss_backbone = ovss_backbone
+        self.lr = lr
+        self.steps = steps
+        self.vision_outputs = vision_outputs
+        self.alpha_cls = alpha_cls
+        if prompt_integration not in ('loss', 'text'):
+            raise ValueError("prompt_integration must be 'loss' or 'text'")
+        self.prompt_integration = prompt_integration
+
+        self.h_ceil = float(h_ceil)
+        self.h_floor = float(h_floor)
+        if self.h_floor >= self.h_ceil:
+            raise ValueError(f"h_floor ({self.h_floor}) must be < h_ceil ({self.h_ceil})")
+        self.lag_scale = float(lag_scale)
+        if self.lag_scale <= 0:
+            raise ValueError(f"lag_scale must be > 0, got {self.lag_scale}")
+        self.max_lag = int(max_lag)
+        if self.max_lag < 1:
+            raise ValueError(f"max_lag must be >= 1, got {self.max_lag}")
+        self.rst = float(rst)
+        if not (0.0 <= self.rst <= 1.0):
+            raise ValueError(f"rst must be in [0, 1], got {self.rst}")
+        self.monitor_interval = int(monitor_interval)
+        if self.monitor_interval < 1:
+            raise ValueError(f"monitor_interval must be >= 1, got {self.monitor_interval}")
+
+        self.runtime = runtime_calculation
+        self.device = device
+
+        if classes is None:
+            raise ValueError("classes is required in __init__")
+        self.classes = classes
+
+        # ---------- OVSS model ----------
+        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+
+        # ---------- Prompts ----------
+        if prompt_dir:
+            self.prompt_templates = load_prompts_from_yaml(prompt_dir)
+            print(f"Number of prompt templates: {len(self.prompt_templates)}")
+        else:
+            self.prompt_templates = [REFERENCE_PROMPT]
+
+        # ---------- Freeze text encoder, enable LN grads ----------
+        self.model.transformer.requires_grad_(False)
+        self.model.ln_final.requires_grad_(False)
+        self.model.token_embedding.requires_grad_(False)
+        self.model.visual = self.set_ln_grads(self.model.visual)
+        params, names = self.collect_ln_params(self.model.visual)
+        self.named_ln_params = list(zip(names, params))
+
+        print_clip_parameters(self.model)
+        print(f"+++ MLMP-SmoothAnchor: vision_outputs={self.vision_outputs}, "
+              f"alpha_cls={self.alpha_cls}, prompt_integration='{self.prompt_integration}'")
+        print(f"+++ Gate: h_ceil={self.h_ceil}, h_floor={self.h_floor}, "
+              f"lag_scale={self.lag_scale}, max_lag={self.max_lag}, rst={self.rst}, "
+              f"monitor_interval={self.monitor_interval}")
+        print(f"+++ lag(H) = {self.lag_scale} / (H - {self.h_floor})  "
+              f"clamped to [1, {self.max_lag}]; H>={self.h_ceil} -> no restore; "
+              f"H<={self.h_floor} -> source")
+        for h in [self.h_ceil, 0.5*(self.h_ceil+self.h_floor), self.h_floor + 0.05,
+                  self.h_floor + 0.01]:
+            lg = self._lag_from_h(h)
+            tag = "source" if lg is None else (f"lag={lg}" if lg <= self.max_lag else "source(>max)")
+            print(f"      H={h:.3f} -> {tag}")
+
+        # ---------- Optimizer ----------
+        self.optimizer = optim.Adam(params, lr=self.lr, betas=(0.9, 0.999), weight_decay=0.0)
+        print_optimizer_parameters(self.optimizer, self.model)
+
+        # ---------- Source state snapshot ----------
+        self.model_state, self.optimizer_state = self.copy_model_and_optimizer(
+            self.model, self.optimizer)
+        self._source_ln_snapshot = {
+            name: self.model_state[name].detach().clone()
+            for name, _ in self.named_ln_params
+        }
+
+        # ---------- Rotating fp16-CPU snapshots ----------
+        self._anchor_buf = deque(maxlen=self.max_lag + 1)
+        self._anchor_buf.append(self._snapshot_ln_weights())
+
+        # ---------- Text features ----------
+        with torch.no_grad():
+            self.text_x = self.extract_text_embeddings(
+                self.classes, self.prompt_templates, average=True).squeeze()
+
+        # ---------- Gate state ----------
+        self.marginal_buf = []
+        self.batch_count = 0
+        self.total_batches = 0
+        self.current_lag = 0          # 0=no restore, None=source, >0=anchor lag
+        self.current_rst = 0.0
+
+        if self.runtime:
+            self.adapt_times = []
+            self.eval_times = []
+
+    # ===========================================================
+    # Smooth mapping H_margin -> lag
+    # ===========================================================
+
+    def _lag_from_h(self, h):
+        if h >= self.h_ceil:
+            return 0
+        if h <= self.h_floor:
+            return None
+        raw = self.lag_scale / (h - self.h_floor)
+        if raw > self.max_lag:
+            return None
+        return max(1, int(round(raw)))
+
+    # ===========================================================
+    # Snapshot helpers
+    # ===========================================================
+
+    @torch.no_grad()
+    def _snapshot_ln_weights(self):
+        return {
+            name: p.detach().cpu().to(torch.float16).clone()
+            for name, p in self.named_ln_params
+        }
+
+    @torch.no_grad()
+    def _push_current_to_anchor_buf(self):
+        self._anchor_buf.append(self._snapshot_ln_weights())
+
+    # ===========================================================
+    # Public API
+    # ===========================================================
+
+    def adapt(self, x):
+        return self.perform_adaptation(x)
+
+    def continual_adapt(self, x):
+        return self.perform_adaptation(x)
+
+    @torch.no_grad()
+    def evaluate(self, x):
+        t1 = time.time()
+        logits, _, _ = self.model(
+            x, self.text_x[-1], True,
+            vision_outputs=self.vision_outputs,
+            interpolate=True,
+            vision_out_type="adaptive_weighted_mean",
+            save_weights=True,
+        )
+        logits = logits[0]
+        if self.runtime:
+            self.eval_times.append(time.time() - t1)
+        return logits
+
+    def reset(self):
+        self.load_model_and_optimizer(
+            self.model, self.optimizer, self.model_state, self.optimizer_state)
+        self._anchor_buf.clear()
+        self._anchor_buf.append(self._snapshot_ln_weights())
+
+    # ===========================================================
+    # Adaptation
+    # ===========================================================
+
+    def perform_adaptation(self, x):
+        t1 = time.time()
+        loss_report = []
+
+        # Snapshot CURRENT state BEFORE this batch's gradient step.
+        self._push_current_to_anchor_buf()
+
+        for _ in range(self.steps):
+            if self.prompt_integration == 'loss':
+                logits, _, _, cls_logits = self.model(
+                    x, self.text_x[:-1], True,
+                    interpolate=False,
+                    vision_outputs=self.vision_outputs,
+                    return_vanilla_cls=True,
+                    vision_out_type="mean",
+                )
+                # logits: (T, B, C, h, w),  cls_logits: (T, B, C, 1, 1)
+                entropy_per_pixel = self.softmax_entropy(logits, dim=2)         # (T, B, h, w)
+                entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)        # (T, B, 1, 1)
+                loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
+
+                # H_margin from ensemble (mean over templates) probability.
+                with torch.no_grad():
+                    probs_ens = logits.softmax(dim=2).mean(dim=0)               # (B, C, h, w)
+                    self.marginal_buf.append(
+                        probs_ens.mean(dim=[0, 2, 3]).detach().float().cpu())
+            else:  # 'text'
+                logits, _, _ = self.model(
+                    x, self.text_x[-1], True,
+                    interpolate=False,
+                    vision_outputs=self.vision_outputs,
+                )
+                loss = self.softmax_entropy(logits, dim=2).mean()
+                with torch.no_grad():
+                    probs = logits[0].softmax(dim=1)                            # (B, C, h, w)
+                    self.marginal_buf.append(
+                        probs.mean(dim=[0, 2, 3]).detach().float().cpu())
+
+            loss_report.append(loss.item())
+            loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            if self.current_rst > 0.0:
+                self._stochastic_restore(self.current_rst, self.current_lag)
+
+        self.batch_count += 1
+        self.total_batches += 1
+        if self.batch_count >= self.monitor_interval:
+            self._update_lag()
+        if self.runtime:
+            self.adapt_times.append(time.time() - t1)
+        return loss_report
+
+    # ===========================================================
+    # Gate update
+    # ===========================================================
+
+    @torch.no_grad()
+    def _update_lag(self):
+        if len(self.marginal_buf) == 0:
+            self.batch_count = 0
+            return
+        agg = torch.stack(self.marginal_buf, dim=0).mean(dim=0)
+        agg = agg / agg.sum().clamp(min=1e-8)
+        h_margin = -(agg * agg.clamp(min=1e-12).log()).sum().item()
+
+        new_lag = self._lag_from_h(h_margin)
+        new_rst = 0.0 if new_lag == 0 else self.rst
+
+        def _label(lg):
+            if lg is None: return "source"
+            if lg == 0:    return "off"
+            return f"lag={lg}"
+
+        old = self.current_lag
+        log_change = False
+        if (old == 0) != (new_lag == 0):
+            log_change = True
+        elif (old is None) != (new_lag is None):
+            log_change = True
+        elif isinstance(old, int) and old > 0 and isinstance(new_lag, int) and new_lag > 0:
+            if abs(new_lag - old) / max(old, 1) > 0.25:
+                log_change = True
+
+        if log_change:
+            print(f"[MLMP-SmoothAnchor] B{self.total_batches}: H_margin={h_margin:.3f}  "
+                  f"{_label(old)} -> {_label(new_lag)}  "
+                  f"(buf={len(self._anchor_buf)})")
+
+        self.current_lag = new_lag
+        self.current_rst = new_rst
+
+        self.marginal_buf.clear()
+        self.batch_count = 0
+
+    # ===========================================================
+    # Restoration
+    # ===========================================================
+
+    @torch.no_grad()
+    def _stochastic_restore(self, rst, lag):
+        if lag is None:
+            anchor_snapshot = self._source_ln_snapshot
+        else:
+            idx = -1 - lag
+            if -idx > len(self._anchor_buf):
+                anchor_snapshot = self._anchor_buf[0]
+            else:
+                anchor_snapshot = self._anchor_buf[idx]
+        for name, p in self.named_ln_params:
+            mask = (torch.rand(p.shape, device=p.device) < rst).to(p.dtype)
+            src = anchor_snapshot[name].to(p.device, dtype=p.dtype)
+            p.data.mul_(1.0 - mask).add_(src * mask)
+
+    # ===========================================================
+    # Loss helper (MLMP-style: takes per-template per-class logits)
+    # ===========================================================
+
+    @staticmethod
+    def softmax_entropy(x: torch.Tensor, dim: int = -3) -> torch.Tensor:
+        return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
+
+    # ===========================================================
+    # Shared helpers
+    # ===========================================================
+
+    def extract_text_embeddings(self, class_names, prompts, average=True):
+        text_features = []
+        for class_name in class_names:
+            texts = [p.format(class_name) for p in prompts]
+            texts = self.tokenize(texts).to(self.device)
+            class_embeddings = self.model.encode_text(texts)
+            class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
+            if average:
+                avg = class_embeddings.mean(dim=0)
+                avg = avg / avg.norm()
+                class_embeddings = torch.cat([class_embeddings, avg.unsqueeze(0)], dim=0)
+            text_features.append(class_embeddings)
+        return torch.stack(text_features, dim=1).to(self.device)
+
+    @staticmethod
+    def set_ln_grads(model):
+        model.requires_grad_(False)
+        for m in model.modules():
+            if isinstance(m, nn.LayerNorm):
+                m.requires_grad_(True)
+        return model
+
+    @staticmethod
+    def collect_ln_params(model):
+        params, names = [], []
+        for nm, m in model.named_modules():
+            if isinstance(m, nn.LayerNorm):
+                for np_, p in m.named_parameters():
+                    if np_ in ['weight', 'bias']:
+                        params.append(p)
+                        names.append(f"visual.{nm}.{np_}")
+        return params, names
+
+    @staticmethod
+    def copy_model_and_optimizer(model, optimizer):
+        return copy.deepcopy(model.state_dict()), copy.deepcopy(optimizer.state_dict())
+
+    @staticmethod
+    def load_model_and_optimizer(model, optimizer, model_state, optimizer_state):
+        model.load_state_dict(model_state, strict=True)
+        optimizer.load_state_dict(optimizer_state)

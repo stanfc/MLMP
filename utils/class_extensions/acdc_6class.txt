@@ -1,0 +1,6 @@
+road
+building
+sign and pole
+vegetation
+sky
+vehicle and person
