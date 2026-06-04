@@ -15,7 +15,7 @@
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=3
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
@@ -27,14 +27,14 @@ WORKERS=1
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
-    # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
+    # # --- blur ---
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -42,9 +42,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
@@ -55,7 +55,7 @@ OVSS_BACKBONE="ViT-L/14"
 
 # ── CoTTA hyperparameters (matching original CoTTA paper values) ────
 MT=0.999        # EMA smoothing factor for teacher
-RST=0.01        # stochastic restoration probability
+RST=0.00        # stochastic restoration probability
 AP=0.92         # anchor confidence threshold (augment when mean conf < AP)
 AUG_N=32        # number of augmented teacher views
 
@@ -69,7 +69,7 @@ STEPS=1
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_no_restore/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

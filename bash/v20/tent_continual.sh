@@ -23,14 +23,14 @@ WORKERS=1
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
-    # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
+    # # --- blur ---
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -38,9 +38,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
@@ -56,7 +56,7 @@ STEPS=1
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

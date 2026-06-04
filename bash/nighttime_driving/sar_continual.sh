@@ -30,7 +30,7 @@ E_0=0.1               # recovery threshold (rescaled from 0.2 for 1000-class)
 EMA_FACTOR=0.9
 RECOVERY_WARMUP=50
 
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}
+CONTINUAL_ROUNDS=1200
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

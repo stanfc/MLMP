@@ -5,7 +5,7 @@
 # STEPS=10 / ROUNDS=10 (matches the new 150R protocol).
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=0
 
 # Dataset Configuration
 DATASET=DarkZurichDataset
@@ -25,7 +25,7 @@ LR=0.00001
 STEPS=1                       # was 10 in ACDC source legacy script
 
 # Experiment
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}   # was 10 in ACDC source legacy script
+CONTINUAL_ROUNDS=1200   # was 10 in ACDC source legacy script
 
 # Output
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"

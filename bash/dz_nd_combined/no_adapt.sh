@@ -4,7 +4,7 @@
 # Establishes the zero-shot source mIoU for this dataset.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=2
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined
@@ -19,7 +19,7 @@ OVSS_BACKBONE="ViT-L/14"
 METHOD="tent_continual"   # lightest method; --adapt omitted so no updates occur
 
 # Experiment
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}
+CONTINUAL_ROUNDS=1
 BATCH_SIZE=1
 
 # Output

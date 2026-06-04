@@ -17,24 +17,24 @@ WORKERS=4
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
-    snow
-    frost
+    # snow
+    # frost
     fog
-    brightness
-    contrast
+    # brightness
+    # contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 # One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
@@ -51,7 +51,7 @@ STEPS=1
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_single_corruption_fog/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

@@ -3,7 +3,7 @@
 # No per-sample reset — model state carries through the whole stream.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=0
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined
@@ -27,7 +27,7 @@ LR=0.00001
 STEPS=1
 
 # Experiment
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}
+CONTINUAL_ROUNDS=600
 
 # Output
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"

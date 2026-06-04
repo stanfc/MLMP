@@ -5,7 +5,7 @@
 # (ACDC source has 1.8 which performed worse: mean=30.14 vs 31.59).
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=0
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined
@@ -31,7 +31,7 @@ MONITOR_INTERVAL=50
 CAUTIOUS_RST=0.01
 BRAKE_RST=0.05
 
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}
+CONTINUAL_ROUNDS=600
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

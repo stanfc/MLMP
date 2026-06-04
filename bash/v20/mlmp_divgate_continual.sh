@@ -12,26 +12,26 @@
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=2
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
-WORKERS=4
+WORKERS=1
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
-    # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
+    # # --- blur ---
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -39,9 +39,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
@@ -73,7 +73,7 @@ BRAKE_RST=0.05
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_threshold_${H_THRESHOLD}_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

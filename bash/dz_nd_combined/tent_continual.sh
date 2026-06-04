@@ -25,7 +25,7 @@ LR=0.00001
 STEPS=1                       # was 10 in ACDC source legacy script
 
 # Experiment
-CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}   # was 10 in ACDC source legacy script
+CONTINUAL_ROUNDS=600   # was 10 in ACDC source legacy script
 
 # Output
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"

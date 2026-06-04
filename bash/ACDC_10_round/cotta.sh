@@ -24,7 +24,7 @@ OVSS_BACKBONE="ViT-L/14"
 
 # CoTTA hyperparameters (matching original CoTTA paper values)
 MT=0.999        # EMA smoothing factor for teacher
-RST=0.01        # stochastic restoration probability
+RST=0.00        # stochastic restoration probability
 AP=0.92         # anchor confidence threshold (augment when mean conf < AP)
 AUG_N=32        # number of augmented teacher views
 
@@ -34,13 +34,13 @@ OUT_VISION="-1"
 # Hyperparameters
 BATCH_SIZE=1
 LR=0.00001     # lower LR for continual — updates accumulate over 10 rounds
-STEPS=10        # online: 1 step per sample
+STEPS=1        # online: 1 step per sample
 
 # Experiment
-CONTINUAL_ROUNDS=10
+CONTINUAL_ROUNDS=150
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}_no_restore/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
