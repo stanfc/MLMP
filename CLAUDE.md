@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
+> **🔀 Merged `origin/2026.06.04` (學長) on 2026-06-04**: brought in **36 new methods** (deyo/rotta/dat/kff baselines, CLIPArTT variants, MLMP topk/minprompt/smooth-anchor variants, TENT siggate/contgate/layered/anchor variants), a **2nd backbone CAT-Seg** (`ovss/catseg/`), **ACDCMerged3/6/10** class-merging datasets, universal `entropy_log.csv`, and new CLI (`--split train+val`, `--subset_size`, `--acdc_overlay_corruptions`, `--corruption_severity`). **None are in our research narrative yet — they are an unvalidated toolbox.** Full catalog + smooth-anchor explainer: **[docs/merged_2026-06-04_inventory.md](docs/merged_2026-06-04_inventory.md)**. Gotchas: needs `einops`; our old `--severity` is gone (use `--corruption_severity`); 55 methods / 293 scripts.
+>
 > **🟢 Current status (2026-05-25)**:
 > - **ACDC win (unchanged)**: TENT-DivGate (h_thr=1.6, cau_rst=0.01) mean=31.59, beats MLMP-episodic 30.6 by +1.0 mIoU, stable 150R.
 > - **SAR ran**: ACDC mean=30.32 with W-shape dips (peak 33.38 > TENT-DivGate but unstable); VOC20 weather ~70.9 ≈ No-Adapt. **Direction bug found + fixed**: recovery was `loss_ma > e_0` should be `<` per SAR paper; `E_0` rescaled `0.7→0.1` for our 19-20 class setting. See [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §7.
