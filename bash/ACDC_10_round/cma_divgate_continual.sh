@@ -31,10 +31,10 @@ H_THRESHOLD=1.8       # H_margin >= this  -> aggressive (rst=0)
 H_WARNING=1.2         # h_warning <= H < h_threshold -> cautious
 MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
 CAUTIOUS_RST=0.005
-BRAKE_RST=0.05
+BRAKE_RST=0.005
 
 CONTINUAL_ROUNDS=150
-SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_brake_${BRAKE_RST}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \

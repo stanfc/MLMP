@@ -29,9 +29,9 @@ TOP_K_PERCENT=0.2
 # - all 0   -> equivalent to cma_continual (no restoration)
 # - all 1   -> LN params fully frozen
 # - any 0   -> that group is unrestored
-EARLY_RST=0.001
-MID_RST=0.01
-LATE_RST=0.05
+EARLY_RST=0.0001
+MID_RST=0.001
+LATE_RST=0.01
 
 # Group cutoffs for ViT-L/14 (24 blocks)
 # blocks [0, EARLY_CUTOFF)            + ln_pre  -> early
@@ -44,7 +44,7 @@ LATE_CUTOFF=16
 CONTINUAL_ROUNDS=150
 
 # Output
-SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_rate_${EARLT_RST}_${MID_RST}_${LATE_RST}/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

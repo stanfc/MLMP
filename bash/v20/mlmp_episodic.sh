@@ -1,8 +1,8 @@
 #!/bin/bash
-# No-Adaptation baseline on PascalVOC20Dataset (CTTA, N rounds).
-# Runs off-the-shelf NA-CLIP without any weight updates.
-# Results are constant across all rounds — zero-shot source model performance.
-# Use this to establish the lower bound before comparing continual TTA methods.
+# MLMP (episodic) on PascalVOC20Dataset.
+# Standard episodic TTA: reset -> adapt -> evaluate for every sample.
+# Model state does NOT carry over between samples — per-sample upper bound.
+# 15 ImageNet-C corruptions applied on-the-fly; uses main.py (not main_continual.py).
 #
 # ─── Patch convention (DO NOT CHANGE without noting in result file) ───
 # INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
@@ -42,24 +42,38 @@ CORRUPTIONS_ARRAY=(
     pixelate
     jpeg_compression
 )
-# One-liner subset override: CORRUPTIONS_LIST="fog snow" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="tent_continual"   # lightest runner; --adapt is omitted so no updates occur
+METHOD="mlmp"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# ── Experiment ─────────────────────────────────────────────────────
-CONTINUAL_ROUNDS=150
+# ── MLMP multi-level: last 18 layers of ViT-L/14 ──────────────────
+OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
+PROMPT_DIR="prompts.yaml"
+ALPHA_CLS=1.0
+
+# ── Training hyperparameters ───────────────────────────────────────
+# Higher LR than continual — safe because state resets every sample.
 BATCH_SIZE=1
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation/}"
+LR=0.001
+STEPS=1
+TRIALS=1
+
+# ── Experiment ─────────────────────────────────────────────────────
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/mlmp_episodic/}"
 
 # ───────────────────────────────────────────────────────────────────
-CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
+                        --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
+                        \
+                        --vision_outputs $OUT_VISION \
+                        --prompt_dir $PROMPT_DIR \
+                        --alpha_cls $ALPHA_CLS \
                         \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \
@@ -69,8 +83,10 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
                         \
+                        --lr $LR \
+                        --steps $STEPS \
                         --batch_size $BATCH_SIZE \
-                        --continual_rounds $CONTINUAL_ROUNDS \
+                        --trials $TRIALS \
                         --seed 0 \
                         \
                         --save_dir $SAVE_DIR \

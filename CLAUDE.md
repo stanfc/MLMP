@@ -4,8 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟢 Current status (2026-04-26)**: `tent_divgate_continual` running on ACDC, R26 of 150. Mean mIoU = 30.49 (matches MLMP-episodic 30.6 target); peak 32.50 @R20. **First method that breaks the continual-vs-episodic tension** — needs to survive the R30-R80 window where natural TENT crashes.
+> **🟢 Current status (2026-05-19)**:
+> - **ACDC win**: TENT-DivGate (h_thr=1.6, cau_rst=0.01) mean=31.59, beats MLMP-episodic 30.6 by +1.0 mIoU, stable 150R.
+> - **Cityscapes + VOC20 negative**: continual TTA collapses or stays below source on synthetic ImageNet-C corruptions. **Root cause: adaptation headroom**. ACDC headroom = 7.3 mIoU works; Cityscapes 1.3 / VOC20 4.6 don't. See [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §4 (Cityscapes), §5 (VOC20).
+> - **Next**: SAR-Continual and EATA-Continual implemented (`adapt/sar_continual.py`, `adapt/eata_continual.py`, `adapt/sam.py`), bash scripts ready for v20 and ACDC, smoke-tested but not yet run for full experiments. Design spec: [docs/2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md). EXPERIMENT_STATUS §6 has concrete run commands.
+>
 > **For the full research arc (every method tried, what we learned, current state), read [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) first.** That file is the canonical entry point — this guide covers conventions and impl details, not narrative.
+
+## Environment Setup
+
+```bash
+conda create -n mlmp python==3.10.13
+conda activate mlmp
+pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+Requires CUDA 11.8. All experiments run with `--seed 0`. No test suite — correctness is validated by comparing `results_all_rounds.txt` against known baselines.
+
+---
 
 ## Research Goal
 
@@ -92,11 +109,11 @@ The full narrative — what each method tried, why it failed or partially worked
 | `cma_proto_continual` | `adapt/cma_proto_continual.py` | [cma_proto_continual_spec.md](docs/cma_proto_continual_spec.md) | **Collapsed**. Frozen source prototype delayed collapse to R54 but didn't prevent it — confirmation bias remains because pseudo-label `ĉ_i` still comes from the current model. Motivated `proposal_after_cma.md`. |
 | `cma_layered_continual` | `adapt/cma_layered_continual.py` | [cma_layered_continual_spec.md](docs/cma_layered_continual_spec.md) | **Stable but flat**. Layer-stratified restoration (Direction A) caps at ~24 mIoU regardless of cutoff/rate combination. Negative result: defense moved to optimizer side cannot raise CMA's natural ceiling. |
 | `cma_divgate_continual` | `adapt/cma_divgate_continual.py` | [cma_divgate_continual_spec.md](docs/cma_divgate_continual_spec.md) | **Partial success**. Buffer-N H_margin gate (Direction B) prevented dead state (mean 21.21 vs CMA's 5.54), but base loss ceiling (CMA peak 27.4) caps overall mean below No Adapt 23.34. |
-| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Currently running, R26/150**. Same gate, **TENT base loss instead of CMA**. Mean mIoU = 30.49 already matches MLMP-episodic 30.6 target. Peak 32.50 @R20. Open question: survives R30-R80 window. |
+| **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Best method. All 150R complete.** Baseline (h_thr=1.8): mean=30.14, R150=29.02. After cautious_rst sweep + threshold tune (h_thr=1.6, h_warn=1.4, cau_rst=0.01): **mean=31.59, peak=32.96@R27, R150=31.34**. Beats MLMP-episodic by +1.0 mIoU, stable to R150. **Next**: h_threshold sweep (1.7/1.8/2.0). |
 
 The original three-direction reframing is in [proposal_after_cma.md](proposal_after_cma.md) (written after CMA-Proto failed). Direction A = layered restoration; Direction B = diversity gate; Direction C (two-timescale meta-adapt) is still deferred.
 
-**Headline finding so far**: TENT-DivGate is the first method that *might* match MLMP-episodic under continual conditions. The same gate that *partially* worked on CMA *fully* works on TENT because TENT's drift is slow enough for cautious-mode restoration (rst=0.005) to compensate, while CMA's faster drift outpaces it.
+**Headline finding**: TENT-DivGate is the first method that **does** match and beat MLMP-episodic under continual conditions (mean 31.59 vs 30.6, stable to R150). The same gate that *partially* worked on CMA *fully* works on TENT because TENT's drift is slow enough for cautious-mode restoration to compensate (CMA collapsed in ~18 rounds; TENT drifts over ~60). Current work: h_threshold sweep to find the gate activation rate that maximises the mean.
 
 ### DPCore (parallel work, prompt-tuning approach)
 Instead of LayerNorm, learn visual prompt tokens. Maintain a coreset of (prompt, feature-stats) pairs — reuse nearest-match prompt for ID batches, learn a new prompt for OOD batches. See `adapt/dpcore.py`. Less central to the current research arc.
@@ -250,6 +267,18 @@ Both share the same gate machinery; only the base loss differs. Spec docs are ne
 - **TENT variant** (`tent_divgate_continual`): uses pure pixel-wise softmax entropy across all pixels (no top-K mask). Marginals come from `logits[0].softmax(dim=1)` — single prompt template (`tent_continual` convention).
 - **Determinism note (important for hyperparameter sweeps)**: with seed=0, runs differing only in `brake_rst` are bit-identical until brake mode actually fires. We saw this in the CMA-DivGate brake-rate sweep (`save/ACDCDataset/cma_divgate_continual_brake_*`) — the four runs were identical for the first 33 rounds because brake never triggered with the default `h_warning=1.2`. Cautious_rst was the only restoration in effect.
 
+### OVSS Model Types (`ovss/__init__.py` — `load_ovss()`)
+
+Three backbone modes, all using ViT-L/14:
+
+| `--ovss_type` | arch | attention | Used by |
+|---|---|---|---|
+| `clip` | vanilla | vanilla | baseline |
+| `sclip` | vanilla | csa | SCLIP variant |
+| `naclip` | reduced | naclip | **all current experiments** |
+
+`load_ovss()` calls `clip.load()` then `visual.set_params(arch, attn_strategy, gaussian_std=5.0)`. The modified CLIP in `ovss/clip/model.py` adds multi-layer output, `vision_out_type` selection, and CLS token return — the upstream OpenAI CLIP is not used directly.
+
 ### DPCore (`adapt/dpcore.py`) — Key Differences from Other Methods
 - **What's trained**: Visual prompt tokens (via `PromptVisualEncoder` wrapper in `adapt/prompt_vit.py`), NOT LayerNorm. Only `model.visual.prompts` has `requires_grad=True`.
 - **Source statistics required**: Must call `adapt_method.obtain_src_stat(src_loader)` before adaptation. For `ACDCDataset` (no clean 'original' split), `main_continual.py` uses the first condition (fog) as source proxy.
@@ -276,13 +305,69 @@ Both share the same gate machinery; only the base loss differs. Spec docs are ne
 | `cma_proto_continual.sh` | cma_proto_continual | main_continual.py | LR=1e-5, steps=1, batch=1, λ_cma=1.0, λ_src=1.0, λ_tgt=0.5, ema=0.999, src=fog |
 | `cma_layered_continual.sh` | cma_layered_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, early/mid/late_rst=0.001/0.01/0.05, cutoffs=8/16 (defaults; rates in the script have been tuned during ablation) |
 | `cma_divgate_continual.sh` | cma_divgate_continual | main_continual.py | LR=1e-5, steps=1, top_k=0.2, h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05 |
-| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, h_threshold=1.8, h_warning=1.2, monitor_interval=50, cautious_rst=0.005, brake_rst=0.05 (no top-K — pure TENT loss) |
+| `tent_divgate_continual.sh` | tent_divgate_continual | main_continual.py | LR=1e-5, steps=1, no top-K — pure TENT loss. **Best confirmed**: h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05. **Script currently set to h_thr=1.8, h_warn=1.4, cau_rst=0.01** for the h_threshold sweep (SAVE_DIR uses `_cau_threshold_${H_THRESHOLD}/` suffix). |
 
 Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the script). Multiple runs of the same method with different hyperparameters use suffixes like `cma_layered_continual_rate__0.001_0.05` or `cma_divgate_continual_brake_0.005`.
 
 ---
 
-## Result Parsing
+## Cityscapes Continual Scripts (`bash/cityscapes_continual/`)
+
+Mirrors the ACDC continual protocol but on CityscapesDataset (val split, 500 images) with synthetic ImageNet-C corruptions applied on-the-fly. **No Python code changes needed** — `main_continual.py` and `prepare_data()` already support CityscapesDataset.
+
+| Script | Method | Key difference from ACDC |
+|--------|--------|--------------------------|
+| `tent_divgate_continual.sh` | tent_divgate_continual | 15 corruptions × 500 imgs/round ≈ 7500/round (vs ACDC 8012) |
+
+**Corruption list** (`CORRUPTIONS_LIST` variable at top of script, ImageNet-C standard order):
+```
+gaussian_noise  shot_noise  impulse_noise          # noise
+defocus_blur    glass_blur  motion_blur  zoom_blur  # blur
+snow  frost  fog  brightness  contrast              # weather
+elastic_transform  pixelate  jpeg_compression       # digital
+```
+Comment out individual lines to run a subset (e.g., weather-only). Override via env vars identical to ACDC convention.
+
+Results saved to `save/CityscapesDataset/{method_name}/results_all_rounds.txt`. Columns: `Round, gaussian_noise, ..., jpeg_compression, Mean_mIoU`.
+
+---
+
+## Running & Monitoring Experiments
+
+Launch any bash script directly; GPU is set inside the script (`GPU_ID=N`):
+
+```bash
+bash bash/ACDC_10_round/tent_divgate_continual.sh
+```
+
+To run a variant with different hyperparameters, edit `H_THRESHOLD`, `CAUTIOUS_RST`, and `SAVE_DIR` inline before launching, or override on the fly:
+
+```bash
+H_THRESHOLD=1.7 CAUTIOUS_RST=0.01 SAVE_DIR="save/ACDCDataset/tent_divgate_continual_hthr_1.7/" \
+  bash bash/ACDC_10_round/tent_divgate_continual.sh
+```
+
+Check progress mid-run (results written after every round):
+
+```bash
+tail -5 save/ACDCDataset/<save_dir>/results_all_rounds.txt
+# Round N, fog, night, rain, snow, Mean_mIoU
+```
+
+Track gate behaviour (TENT-DivGate only — written every monitor_interval batches):
+
+```bash
+tail -20 save/ACDCDataset/<save_dir>/divgate_log.txt
+# total_batches,h_margin,mode
+```
+
+Mode-transition lines are also printed to stdout: `[DivGate-T] B{N}: H_margin={v}  old -> new`.
+
+---
+
+## Result Parsing & Visualization
+
+### ACDC Continual Results
 
 `parse_acdc_results.py` auto-generates a LaTeX table:
 - Reads `results_all_rounds.txt` for continual methods
@@ -292,3 +377,41 @@ Results saved to `save/ACDCDataset/{method_name}/` (or custom `SAVE_DIR` in the 
 - Output: `save/ACDCDataset/acdc_table.tex`
 
 Run: `python parse_acdc_results.py`
+
+### Episodic Benchmark Results (non-ACDC)
+
+Two-step pipeline for the original 7-dataset benchmark with 15 corruptions:
+
+```bash
+python parse_results.py          # reads .save/ → results_summary.csv
+python generate_latex_table.py   # reads results_summary.csv → results_table.tex
+```
+
+`parse_results.py` walks `.save/{dataset}/mlmp/results.txt` files (episodic format), extracts mean ± std per corruption, and writes `results_summary.csv`. `generate_latex_table.py` formats it as a LaTeX table ordered by the 15-corruption sequence from the paper.
+
+### Plotting Scripts
+
+All scripts read from `save/ACDCDataset/` and write PNG+SVG to the same directory. Run from the repo root:
+
+| Script | Output file | What it shows |
+|--------|-------------|---------------|
+| `plot_acdc_round_miou.py` | `acdc_round_miou.{png,svg}` | Round vs mean mIoU (initial 20-round experiments for TENT/MLMP-continual/episodic) |
+| `plot_all_methods_comparison.py` | `all_methods_comparison.{png,svg}` | All methods on one figure; important methods solid, background methods faded |
+| `plot_divgate_sweep.py` | `acdc_divgate_cau_rst_sweep.{png,svg}` | `cautious_rst` sweep variants vs TENT-continual reference |
+| `plot_tent_divgate_threshold_sweep.py` | `acdc_divgate_threshold_sweep.{png,svg}` | `h_threshold` sweep variants |
+| `plot_hmargin_by_threshold.py` | `hmargin_threshold_sweep.{png,svg}` | H_margin trajectory per threshold variant; colour-coded by gate mode (green/orange/red) |
+| `plot_tent_divgate_compare.py` | *(see script header)* | Direct comparison of TENT-DivGate configs |
+
+### Qualitative Visualization
+
+`qualitative.py` randomly samples N images from a dataset, adapts MLMP, and saves original/GT/prediction/overlay quads:
+
+```bash
+python qualitative.py \
+    --dataset COCOStuffDataset \
+    --data_dir .data/coco_stuff164k/ \
+    --save_dir .qualitative/COCOStuffDataset/ \
+    --n_images 5 --seed 42 \
+    --ovss_type naclip --ovss_backbone ViT-L/14 \
+    --prompt_dir prompts.yaml
+```

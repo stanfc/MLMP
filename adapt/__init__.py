@@ -17,6 +17,9 @@ from .cma_proto_continual import CMAProtoContinual
 from .cma_layered_continual import CMALayeredContinual
 from .cma_divgate_continual import CMADivGateContinual
 from .tent_divgate_continual import TENTDivGateContinual
+from .mlmp_divgate_continual import MLMPDivGateContinual
+from .sar_continual import SARContinual
+from .eata_continual import EATAContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -41,6 +44,12 @@ METHOD_CLASSES = {
     'cma_divgate_continual': CMADivGateContinual,
     # Continual TTA with TENT + diversity-gated stochastic restoration (Direction B on TENT)
     'tent_divgate_continual': TENTDivGateContinual,
+    # Continual TTA with MLMP loss + diversity-gated stochastic restoration
+    'mlmp_divgate_continual': MLMPDivGateContinual,
+    # Continual TTA with SAM + reliable filter + model recovery (SAR, ICLR 2023)
+    'sar_continual': SARContinual,
+    # Continual TTA with reliable+non-redundant filter + Fisher-weighted EWC (EATA, ICML 2022)
+    'eata_continual': EATAContinual,
 }
 
 

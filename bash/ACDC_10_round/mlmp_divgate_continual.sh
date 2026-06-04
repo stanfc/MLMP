@@ -1,14 +1,14 @@
 #!/bin/bash
-# TENT-DivGate-Continual on ACDC (CTTA, 150 rounds).
-# Pure TENT pixel-wise entropy + diversity-gated stochastic restoration.
-# Same gate mechanism as cma_divgate_continual, but the base loss is
-# TENT entropy instead of CMA cosine alignment — TENT's natural peak
-# (32.4) exceeds MLMP-episodic (30.6), so gating it is the highest-
-# leverage anti-collapse experiment.
-# See docs/tent_divgate_continual_spec.md for the full design.
+# MLMP-DivGate-Continual on ACDC (CTTA, 150 rounds).
+# MLMP multi-prompt multi-level entropy loss + diversity-gated stochastic restoration.
+#
+# Sanity-check counterpart to bash/cityscapes_continual/mlmp_divgate_continual.sh:
+# MLMP-continual on ACDC peaks at ~28-29 mIoU (mean 28.9 step=1) and degrades
+# slowly. The gate should prevent late-round drift; if MLMP-DivGate beats
+# MLMP-continual here, the same recipe is worth pushing on Cityscapes weather.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=1
 
 # Dataset Configuration
 DATASET=ACDCDataset
@@ -18,35 +18,41 @@ CONDITIONS="fog night rain snow"
 WORKERS=4
 
 # Method Configuration
-METHOD="tent_divgate_continual"
+METHOD="mlmp_divgate_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# Hyperparameters (match tent_continual.sh: pure TENT, no top_k)
+# MLMP multi-level: use last 18 layers of ViT-L/14
+OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
+PROMPT_DIR="prompts.yaml"
+PROMPT_INTEGRATION="loss"
+ALPHA_CLS=1.0
+
+# Hyperparameters (match mlmp_continual.sh)
 BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# Diversity gate
-# - h_threshold lowered from proposal default 1.8 -> 1.6 to extend
-#   aggressive-mode window and capture more of TENT's natural peak
-# - h_warning raised from default 1.2 -> 1.4 so brake mode actually
-#   fires as a safety net (at default 1.2 it never triggered in any
-#   prior DivGate run -- gate behaved as 2-tier aggressive/cautious)
-H_THRESHOLD=1.8       # H_margin >= this  -> aggressive (rst=0)
+# Diversity gate (best confirmed hyperparameters from TENT-DivGate ACDC sweep)
+H_THRESHOLD=1.6       # H_margin >= this  -> aggressive (rst=0)
 H_WARNING=1.4         # h_warning <= H < h_threshold -> cautious; < h_warning -> brake
-MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
+MONITOR_INTERVAL=50
 CAUTIOUS_RST=0.01
 BRAKE_RST=0.05
 
 CONTINUAL_ROUNDS=150
-SAVE_DIR="save/${DATASET}/${METHOD}_cau_threshold_${H_THRESHOLD}/"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_threshold_${H_THRESHOLD}/}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
+                        \
+                        --vision_outputs $OUT_VISION \
+                        --prompt_dir $PROMPT_DIR \
+                        --prompt_integration $PROMPT_INTEGRATION \
+                        --alpha_cls $ALPHA_CLS \
                         \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \

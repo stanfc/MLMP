@@ -1,36 +1,30 @@
 #!/bin/bash
-# No-Adaptation baseline on PascalVOC20Dataset (CTTA, N rounds).
-# Runs off-the-shelf NA-CLIP without any weight updates.
-# Results are constant across all rounds — zero-shot source model performance.
-# Use this to establish the lower bound before comparing continual TTA methods.
-#
-# ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
-# This is THE comparable v20 setting; results from other patch settings
-# are not directly comparable. See
-# docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
+# TENT-DivGate-Continual on CityscapesDataset (CTTA, N rounds).
+# 15 ImageNet-C corruptions applied on-the-fly; same gate mechanism
+# and best confirmed hyperparameters as the ACDC experiment.
+# See docs/2026-05-03-cityscapes-continual-divgate-design.md.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=3
 
 # ── Dataset ────────────────────────────────────────────────────────
-DATASET=PascalVOC20Dataset
-DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="224 224"
-WORKERS=1
+DATASET=CityscapesDataset
+DATA_DIR="data/Cityscape/"
+INIT_RESIZE="1120 560"
+WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 # Comment out individual lines to run a subset.
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -38,25 +32,37 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
-# One-liner subset override: CORRUPTIONS_LIST="fog snow" bash script.sh
+# One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="tent_continual"   # lightest runner; --adapt is omitted so no updates occur
+METHOD="tent_divgate_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
+# ── Training hyperparameters ───────────────────────────────────────
+BATCH_SIZE=1
+LR=0.00001
+STEPS=1
+
+# ── Diversity gate (best confirmed from ACDC sweeps) ───────────────
+H_THRESHOLD=2.0       # H_margin >= this        -> aggressive (rst=0)
+H_WARNING=1.4         # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
+MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
+CAUTIOUS_RST=0.01
+BRAKE_RST=0.05
+
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-BATCH_SIZE=1
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_threshold_${H_THRESHOLD}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+                        --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
@@ -69,9 +75,17 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
                         \
+                        --lr $LR \
+                        --steps $STEPS \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
+                        \
+                        --h_threshold $H_THRESHOLD \
+                        --h_warning $H_WARNING \
+                        --monitor_interval $MONITOR_INTERVAL \
+                        --cautious_rst $CAUTIOUS_RST \
+                        --brake_rst $BRAKE_RST \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

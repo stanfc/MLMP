@@ -1,55 +1,94 @@
 #!/bin/bash
-# GPU Configuration
-GPU_ID=3
+# MLMP-Continual on PascalVOC20Dataset (CTTA, N rounds).
+# Multi-prompt entropy + ILE loss, model state NEVER reset between samples.
+# 15 ImageNet-C corruptions applied on-the-fly.
+#
+# Expected behaviour: gradual performance decline over rounds (no anti-forgetting
+# mechanism). Use as ablation baseline against cotta.sh and tent_divgate_continual.sh.
+#
+# ─── Patch convention (DO NOT CHANGE without noting in result file) ───
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
+# This is THE comparable v20 setting; results from other patch settings
+# are not directly comparable. See
+# docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 
-# Dataset Configuration
+# ── GPU ────────────────────────────────────────────────────────────
+GPU_ID=0
+
+# ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
-DATA_DIR=".data/VOC2012/"
+DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
-ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
 WORKERS=4
 
-# Method and OVSS Model Configuration
-METHOD="mlmp"
-OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
-PROMPT_DIR="prompts.yaml"
-ALPHA_CLS=1.0
+# ── Corruption conditions (ImageNet-C standard order) ──────────────
+# Comment out individual lines to run a subset.
+CORRUPTIONS_ARRAY=(
+    # --- noise ---
+    gaussian_noise
+    shot_noise
+    impulse_noise
+    # --- blur ---
+    defocus_blur
+    glass_blur
+    motion_blur
+    zoom_blur
+    # --- weather ---
+    snow
+    frost
+    fog
+    brightness
+    contrast
+    # --- digital ---
+    elastic_transform
+    pixelate
+    jpeg_compression
+)
+CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
+
+# ── Method ─────────────────────────────────────────────────────────
+METHOD="mlmp_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# Hyperparameters
-BATCH_SIZE=2
-LR=1e-4
+# ── MLMP multi-level: last 18 layers of ViT-L/14 ──────────────────
+OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
+PROMPT_DIR="prompts.yaml"
+ALPHA_CLS=1.0
+
+# ── Training hyperparameters ───────────────────────────────────────
+BATCH_SIZE=1
+LR=0.00001
 STEPS=1
-TRIALS=1
 
-# Output
-SAVE_DIR=".save/${DATASET}/${METHOD}_continual/"
+# ── Experiment ─────────────────────────────────────────────────────
+CONTINUAL_ROUNDS=150
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
-# Run
-CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
+# ───────────────────────────────────────────────────────────────────
+CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
-                        --continual \
                         --method $METHOD \
-                        --prompt_dir $PROMPT_DIR \
-                        --vision_outputs $OUT_VISION \
-                        --alpha_cls $ALPHA_CLS \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
                         \
-                        --save_dir $SAVE_DIR \
-                        --data_dir $DATA_DIR \
+                        --vision_outputs $OUT_VISION \
+                        --prompt_dir $PROMPT_DIR \
+                        --alpha_cls $ALPHA_CLS \
+                        \
                         --dataset $DATASET \
-                        --workers $WORKERS \
+                        --data_dir $DATA_DIR \
                         --init_resize $INIT_RESIZE \
                         --patch_size 224 224 \
                         --patch_stride 112 \
-                        --corruptions_list $ALL_CORRUPTIONS \
+                        --corruptions_list $CORRUPTIONS_LIST \
+                        --workers $WORKERS \
                         \
                         --lr $LR \
                         --steps $STEPS \
-                        --batch-size $BATCH_SIZE \
-                        --trials $TRIALS \
+                        --batch_size $BATCH_SIZE \
+                        --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
                         \
+                        --save_dir $SAVE_DIR \
                         --class_extensions

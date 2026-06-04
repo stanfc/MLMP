@@ -1,62 +1,43 @@
 #!/bin/bash
-# No-Adaptation baseline on PascalVOC20Dataset (CTTA, N rounds).
-# Runs off-the-shelf NA-CLIP without any weight updates.
-# Results are constant across all rounds — zero-shot source model performance.
-# Use this to establish the lower bound before comparing continual TTA methods.
-#
-# ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
-# This is THE comparable v20 setting; results from other patch settings
-# are not directly comparable. See
-# docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
+# SAR-Continual on ACDC (CTTA, 150 rounds).
+# SAM optimizer + reliable sample filtering + model recovery (ICLR 2023).
+# See docs/2026-05-17-sar-eata-v20-design.md for the full design.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=3
 
 # ── Dataset ────────────────────────────────────────────────────────
-DATASET=PascalVOC20Dataset
-DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="224 224"
-WORKERS=1
-
-# ── Corruption conditions (ImageNet-C standard order) ──────────────
-# Comment out individual lines to run a subset.
-CORRUPTIONS_ARRAY=(
-    # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
-    # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
-    # --- weather ---
-    snow
-    frost
-    fog
-    brightness
-    contrast
-    # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
-)
-# One-liner subset override: CORRUPTIONS_LIST="fog snow" bash script.sh
-CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
+DATASET=ACDCDataset
+DATA_DIR="data/ACDC/"
+INIT_RESIZE="1120 560"
+CONDITIONS="fog night rain snow"
+WORKERS=4
 
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="tent_continual"   # lightest runner; --adapt is omitted so no updates occur
+METHOD="sar_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
+# ── Training hyperparameters (match tent_divgate_continual.sh on ACDC) ─
+BATCH_SIZE=1
+LR=0.00001
+STEPS=1
+
+# ── SAR (paper defaults; e_margin = 0.4 * ln(num_classes)) ─────────
+# ACDC uses 19 Cityscapes classes → e_margin = 0.4 * ln(19) ≈ 1.178
+E_MARGIN=1.178        # sample-level mean-pixel entropy threshold
+SAM_RHO=0.05          # SAM perturbation radius (paper default)
+E_0=0.2               # recovery threshold for loss EMA
+EMA_FACTOR=0.9        # loss MA decay
+RECOVERY_WARMUP=50    # batches before recovery can fire
+
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-BATCH_SIZE=1
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+                        --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
@@ -66,12 +47,20 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --init_resize $INIT_RESIZE \
                         --patch_size 224 224 \
                         --patch_stride 112 \
-                        --corruptions_list $CORRUPTIONS_LIST \
+                        --corruptions_list $CONDITIONS \
                         --workers $WORKERS \
                         \
+                        --lr $LR \
+                        --steps $STEPS \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
+                        \
+                        --e_margin $E_MARGIN \
+                        --sam_rho $SAM_RHO \
+                        --e_0 $E_0 \
+                        --ema_factor $EMA_FACTOR \
+                        --recovery_warmup $RECOVERY_WARMUP \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions
