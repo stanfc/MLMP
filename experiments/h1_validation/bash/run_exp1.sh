@@ -10,7 +10,7 @@
 set -e
 
 N=${N:-100}
-GPU=${GPU:-0}
+GPU=3
 CSV=${CSV:-experiments/h1_validation/results/exp1/all.csv}
 DATASETS=${DATASETS:-"ACDC DarkZurich NighttimeDriving VOC20_matched Cityscapes"}
 

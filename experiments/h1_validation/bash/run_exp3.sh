@@ -9,7 +9,7 @@
 #   SEVERITIES="1 2 3 4 5"
 set -e
 
-GPU=${GPU:-0}
+GPU=3
 CSV=${CSV:-experiments/h1_validation/results/exp3/all.csv}
 DATASETS=${DATASETS:-"VOC20_matched Cityscapes"}
 SEVERITIES=${SEVERITIES:-"1 2 3 4 5"}

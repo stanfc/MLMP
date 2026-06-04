@@ -1,8 +1,9 @@
 # Experiment Status — Research Arc
 
-**Last updated**: 2026-05-19
-**Current state**: ACDC phase COMPLETE. Cityscapes and VOC20 generalisation phases reveal a **fundamental headroom problem**: on synthetic ImageNet-C corruptions where the source model is already near MLMP-episodic performance (gap ≤ 5 mIoU), no continual TTA method (including TENT-DivGate, MLMP-DivGate) can produce an upward trend — all variants collapse or degrade below source. **New methods (SAR, EATA) implemented and smoke-tested**; ready to run as the next candidate for breaking the headroom barrier. See §4 (Cityscapes) and §5 (VOC20) for full analysis.
-**Active runs**: none currently. Next: run SAR/EATA on VOC20 weather-5 and ACDC.
+**Last updated**: 2026-06-03
+**Newest result (2026-06-03, §15)**: **H1 validation experiments RUN & analyzed.** H1 ("CLIP saw synthetic → no adaptation direction") is **refuted**: Cityscapes *synthetic* corruptions have the same gradient geometry (cos ≈ 0.39) and headroom as *native* shifts (cos ≈ 0.49). The real axis is **VOC vs everything else**, and the 3 synthetic failures split into two mechanisms — VOC = genuine no-headroom; Cityscapes = temporal-stream collapse *despite* headroom + correct gradient. New testable hypothesis **H2** (stream length/heterogeneity, not synthetic-ness). See §15.
+**Prior state**: SAR phase COMPLETE on ACDC + VOC20 (after **direction-bug fix**, see §7). SAR alone hits ACDC mean 30.32 (matches MLMP-episodic 30.60 but with periodic W-shape dips); on VOC20 weather it hits ~67 (below No-Adapt 70.79, headroom problem unchanged). **SAR-DivGate hybrid implemented (Phase J)** — combines SAR's SAM + reliable filter with DivGate's 3-tier stochastic restore (replaces SAR's hard recovery). Implemented, not yet run. **New `bash/v20_acdc_matched/` folder** built for direct ACDC↔VOC20 trajectory comparison (4 corruptions × 101 imgs = 404/round ≈ ACDC 406). 8 method scripts ready; no runs yet.
+**Active runs**: none currently. Next priority: `bash/ACDC_10_round/sar_divgate_continual.sh` (Phase J test), then `bash/v20_acdc_matched/*` for cross-dataset trajectories.
 **Open data**: CMA-Layered loose-rate variants in `save/ACDCDataset/cma_layered_continual_rate_*` paused at R47-48 (lower priority).
 
 This document is the **entry point** for anyone picking up the work — read this first, then drill into the referenced specs for detail. The full timeline below covers every experiment from the original CMA hypothesis through the current TENT-DivGate breakthrough.
@@ -410,7 +411,189 @@ bash bash/ACDC_10_round/eata_continual.sh
 
 ---
 
-## 7. Open Questions (lower priority)
+## 7. Phase I Results — SAR Ran on ACDC + VOC20 (post-bug-fix, 2026-05-21)
+
+### I-5: Direction Bug in SAR Recovery — found and fixed
+
+The original implementation had **the model-recovery comparison reversed**:
+
+```python
+# WRONG (initial implementation, was in adapt/sar_continual.py)
+if self.loss_ma > self.e_0:
+    self._model_recovery()
+
+# CORRECT (per SAR paper Algorithm 1 + official mr-eggplant/SAR/sar.py)
+if self.loss_ma < self.e_0:
+    self._model_recovery()
+```
+
+The intent: when entropy EMA *drops* (model collapsed to over-confident trivial predictions), reset. The reversed `>` made recovery fire when entropy was *high* — opposite of the paper. With pre-fix `E_0=0.7` on ACDC, recovery fired only 3 times in 60,900 batches (loss_ma usually stayed < 0.7 after warmup, so the wrong condition didn't trigger) — the run was effectively "SAR without recovery" (SAM + reliable filter only).
+
+**Fix landed in [adapt/sar_continual.py:209](adapt/sar_continual.py#L209)**: direction flipped, threshold rescaled to `E_0=0.1` (paper uses 0.2 for ImageNet's 1000 classes; we scale by `0.2 × ln(19)/ln(1000) ≈ 0.085 → 0.1` for our 19-20 class setting). Updated:
+- [docs/2026-05-17-sar-eata-v20-design.md:61](2026-05-17-sar-eata-v20-design.md) (spec)
+- [bash/ACDC_10_round/sar_continual.sh](../bash/ACDC_10_round/sar_continual.sh), [bash/v20/sar_continual.sh](../bash/v20/sar_continual.sh), [bash/cityscapes_continual/sar_continual.sh](../bash/cityscapes_continual/sar_continual.sh) (E_0 updated to 0.1)
+
+### I-6: ACDC Results (`save/ACDCDataset/sar_continual_weather/`, 150R)
+
+Pre-fix (the data file is what's there now — `>` direction with `E_0=0.7`):
+
+| Method | Mean | Peak | R150 | Pattern |
+|---|---|---|---|---|
+| **TENT-DivGate** (h_thr=1.6, cau_rst=0.01) | **31.59** | 32.96 @ R27 | **31.34** | Stable 31-33 entire 150R |
+| **SAR-continual** (pre-fix) | 30.32 | **33.38** @ ~R15 | 25.31 | "W-shape": dips at R50/R100/R150 |
+| MLMP episodic | 30.60 | — | — | Per-sample reset baseline |
+| No Adapt | 23.34 | — | — | |
+
+**Key observation**: SAR's peak (33.38) beats TENT-DivGate's peak (32.96), but SAR has 3 periodic deep dips down to ~24-25 mIoU — characteristic of "drift → catastrophic state → recovery → re-adapt" cycles. TENT-DivGate's continuous DivGate brake prevents the dips entirely. **This is what motivates Phase J (SAR-DivGate).**
+
+Plot: [save/ACDCDataset/acdc_4methods_comparison.png](../save/ACDCDataset/acdc_4methods_comparison.png) (script: [plot_acdc_4methods.py](../plot_acdc_4methods.py)).
+
+### I-7: VOC20 Results (`save/PascalVOC20Dataset/sar_continual_weather*/`)
+
+Two runs exist:
+- `sar_continual_weather/` — pre-fix, 42 rounds, mean ~67, declining trajectory
+- `sar_continual_weather_v2/` — post-fix, 113 rounds, mean ~71, flat trajectory (R1 70.95, R2 70.93 — essentially flat from start because correct `<` direction + small `E_0=0.1` rarely triggers reset on healthy data)
+
+| Method | Mean | Peak | Last R |
+|---|---|---|---|
+| MLMP episodic | **75.35** | — | — |
+| No Adapt | 70.79 | — | — |
+| SAR-continual (post-fix v2) | ~70.9 | ~70.95 | R113=70.94 |
+| SAR-continual (pre-fix) | ~67-68 | 70.90 | R41=66.94 |
+| TENT-DivGate h_thr=1.6 | ~57 | — | R109=57.73 |
+
+Plot: [save/PascalVOC20Dataset/voc20_4methods_comparison.png](../save/PascalVOC20Dataset/voc20_4methods_comparison.png) (script: [plot_voc20_4methods.py](../plot_voc20_4methods.py); uses pre-fix `sar_continual_weather/` per user choice).
+
+**Headroom verdict unchanged**: even with SAR's better optimizer, no continual method beats VOC20's source (No-Adapt 70.79 → MLMP-ep 75.35 = 4.6 absolute / 6.4% relative headroom is too small for entropy-based gradient signals to find improvement direction).
+
+### I-8: Cityscapes — Script Only, Not Run
+
+`bash/cityscapes_continual/sar_continual.sh` exists with the bug fix applied (`E_0=0.1`), but no run yet. SAR for Cityscapes is lower priority since the headroom there (1.3) is the smallest of all three datasets — least likely to show useful adaptation.
+
+---
+
+## 8. Phase J: SAR-DivGate-Continual — IMPLEMENTED, NOT YET RUN (2026-05-21)
+
+### J-1: Hypothesis
+
+SAR's W-shape dips on ACDC (§I-6) are exactly the failure mode DivGate's 3-tier graded restoration was designed to prevent. The two mechanisms address **disjoint failure modes** and use **disjoint signals**:
+
+| | Signal | Defense |
+|---|---|---|
+| SAR recovery | Per-pixel entropy EMA (sample-level confidence) | Binary hard reset, fires only at extreme collapse |
+| DivGate | Marginal class entropy H_margin (population-level diversity) | Continuous 3-tier graded stochastic restore |
+
+**Proposed combination** ([docs/sar_divgate_continual_spec.md](sar_divgate_continual_spec.md)):
+- **Keep** from SAR: reliability filter + SAM optimizer + pixel-level filter (SAM is the only mechanism that *raises* the peak — found flatter LN minima)
+- **Drop** from SAR: loss_ma EMA tracking + hard model_recovery (replaced by DivGate)
+- **Add** from TENT-DivGate: H_margin marginal buffer + 3-tier stochastic restore
+
+Targets (ACDC): basic mean ≥ 28 (DivGate prevents W-shape), target ≥ 31.59 (matches TENT-DivGate, confirms SAM doesn't hurt), **ideal ≥ 32.5 + peak ≥ 33** (SAM lifts peak, DivGate holds it — research win).
+
+### J-2: Implementation Status
+
+| File | Purpose | Status |
+|---|---|---|
+| [adapt/sar_divgate_continual.py](../adapt/sar_divgate_continual.py) | `SARDivGateContinual` class | ✅ written, parses |
+| [adapt/__init__.py](../adapt/__init__.py) | Registers `'sar_divgate_continual'` | ✅ done |
+| [main_continual.py](../main_continual.py) | `add_method_specific_args` branch | ✅ done (7 CLI args) |
+| [bash/ACDC_10_round/sar_divgate_continual.sh](../bash/ACDC_10_round/sar_divgate_continual.sh) | ACDC runner | ✅ |
+| [bash/v20/sar_divgate_continual.sh](../bash/v20/sar_divgate_continual.sh) | VOC20 weather runner | ✅ |
+| [bash/cityscapes_continual/sar_divgate_continual.sh](../bash/cityscapes_continual/sar_divgate_continual.sh) | Cityscapes runner | ✅ |
+| [docs/sar_divgate_continual_spec.md](sar_divgate_continual_spec.md) | Full design spec (14 sections) | ✅ |
+
+**Key implementation invariants** (from spec):
+- H_margin push happens on **first forward only** (before SAM perturbation) — perturbed-weight forward is a virtual position, signal would be noisy
+- H_margin buffer is updated **even when reliability filter skips the sample** — keeps gate responsive under heavy filtering
+- Stochastic restore fires **only after a real SAM `second_step`** — no parameters changed, nothing to restore
+- `loss_ma` field **does not exist** on the instance (regression guard against accidentally keeping SAR's recovery state)
+- Log tag `[DivGate-S]` (S for SAR) distinguishes from `[DivGate-T]` (TENT) and `[DivGate]` (CMA) in mixed logs
+
+### J-3: Defaults (day-1 commands)
+
+```
+SAR side:    e_margin=1.8, sam_rho=0.05         (same as sar_continual.sh)
+DivGate:     h_threshold=1.6, h_warning=1.4     (TENT-DivGate ACDC best)
+             monitor_interval=50
+             cautious_rst=0.01, brake_rst=0.05
+Shared:      lr=1e-5, steps=1, batch_size=1
+```
+
+```bash
+# ACDC (highest priority — directly tests the hypothesis)
+bash bash/ACDC_10_round/sar_divgate_continual.sh
+
+# VOC20 weather (secondary — headroom likely still wins)
+bash bash/v20/sar_divgate_continual.sh
+
+# Cityscapes weather (tertiary)
+bash bash/cityscapes_continual/sar_divgate_continual.sh
+```
+
+---
+
+## 9. Phase K: `bash/v20_acdc_matched/` — Cross-Dataset Comparability Folder (2026-05-21)
+
+### K-1: Motivation
+
+ACDC and VOC20 trajectories are not directly overlay-comparable because they see **different amounts of data per round**:
+
+| Dataset | Per round | Notes |
+|---|---|---|
+| ACDC | 406 imgs (fog 100 + night 106 + rain 100 + snow 100) | Natural conditions |
+| VOC20 weather (`bash/v20/`) | 7245 imgs (5 corruptions × 1449 val) | Synthetic, full set |
+| **VOC20 ACDC-matched (`bash/v20_acdc_matched/`)** | **404 imgs (4 × 101)** | New — matches ACDC's 406 |
+
+VOC20 currently sees ~18× more data per round → a method "stable to R150 on ACDC" may collapse at R8 on VOC20 just from 18× more gradient steps. Cross-dataset stability claims become meaningless.
+
+### K-2: Mechanism
+
+**Deterministic VOC20 subset** via mmseg's existing `ann_file` machinery:
+
+1. `scripts/make_voc_subset.py --n 101 --seed 0` → writes `data/VOC/VOC2012/ImageSets/Segmentation/val_subset_101_seed0.txt` (deterministic: `random.Random(seed) + sorted()`)
+2. `prepare_data(..., ann_file=...)` kwarg overrides `mm_config['ann_file']`; auto-strips `data_root` prefix so both relative and full paths work
+3. `--ann_file` CLI added to **both** `main.py` and `main_continual.py`, plumbed to **stream loaders only** (not src-stat loaders for EATA / DPCore / CMA-Proto — those still see full source distribution)
+
+Every bash script in the folder auto-generates the subset file if missing — no manual setup needed.
+
+### K-3: Default Corruption Choice
+
+4 closest to ACDC's natural conditions (rationale documented in each script header):
+
+| VOC20 corruption | ACDC condition | Why |
+|---|---|---|
+| `snow` | snow | direct match |
+| `fog` | fog | direct match |
+| `frost` | rain | both wet/icy outdoor weather, surface coverage |
+| `contrast` | night | low contrast ≈ poor night visibility |
+
+`CORRUPTIONS_ARRAY` has all 15 listed; comment / uncomment to pick a different 4-set.
+
+### K-4: Scripts (8 methods)
+
+```
+bash/v20_acdc_matched/
+├── no_adapt.sh                    (tent_continual without --adapt)
+├── tent_continual.sh
+├── mlmp_continual.sh
+├── cotta.sh                       (mt=0.999, rst=0.00, ap=0.92, aug_n=32)
+├── mlmp_episodic.sh               (uses main.py)
+├── mlmp_divgate_continual.sh      (h_thr=1.6)
+├── tent_divgate_continual.sh      (h_thr=1.6, cau_rst=0.01)
+└── sar_continual.sh               (e_margin=1.8, sam_rho=0.05, E_0=0.1 post-fix)
+```
+
+All saved to `save/PascalVOC20Dataset/v20_acdc_matched/{method}/`.
+
+### K-5: Status
+
+✅ Smoke-tested (no_adapt config, 1 round, --debug) — pipeline works end-to-end, subset loaded (101 imgs/corruption confirmed via progress bar `1/101 → 5/101`), output format correct.
+
+**Not yet run for real**. Once you launch them, results will be directly overlay-comparable to ACDC's same-method trajectories.
+
+---
+
+## 10. Open Questions (lower priority)
 
 ### Phase F-4 (planned): h_threshold sweep — isolate gate activation rate
 
@@ -439,68 +622,87 @@ bash bash/ACDC_10_round/eata_continual.sh
 
 ---
 
-## 8. Concrete Next Actions (in order)
+## 11. Concrete Next Actions (in order)
 
-**ACDC, Cityscapes, VOC20 baselines — complete.**
+**ACDC + VOC20 SAR runs complete (post-bug-fix). Verdict: SAR matches MLMP-episodic on ACDC but with W-shape instability; VOC20 still hits headroom ceiling.**
 
-**Next research move: test whether SAR/EATA can break the headroom barrier.**
+**Next research move: test SAR-DivGate (Phase J) on ACDC. This is the experiment that directly tests the hypothesis "DivGate's graded restore prevents SAR's W-shape collapse."**
 
-1. **SAR on VOC20 weather-5** (highest priority — VOC20 is the cleanest test bed with continuous trajectories already established for all baselines):
+1. **Phase J: SAR-DivGate on ACDC** (highest priority — direct hypothesis test):
    ```bash
-   CORRUPTIONS_LIST="snow frost fog brightness contrast" \
-   SAVE_DIR="save/PascalVOC20Dataset/sar_continual_weather/" \
-   bash bash/v20/sar_continual.sh
+   bash bash/ACDC_10_round/sar_divgate_continual.sh
    ```
-   Success criterion: mean > 70.79 (No-Adapt) for at least 50 rounds. Stretch: approach 75.35 (MLMP-episodic).
+   Defaults: `e_margin=1.8, sam_rho=0.05, h_thr=1.6, h_warn=1.4, cau_rst=0.01, brake_rst=0.05`.
+   Success criteria (§J-1):
+   - Basic: R150 mean ≥ 28, no W-shape dip below 25 → DivGate replaced SAR's recovery cleanly
+   - Target: mean ≥ 31.59 → SAM didn't hurt
+   - **Ideal**: mean ≥ 32.5 + peak ≥ 33 → SAM lifts peak, DivGate holds it
 
-2. **EATA on VOC20 weather-5** (parallel):
+2. **Phase K: launch v20_acdc_matched bash folder** (parallel — produces cross-dataset trajectories):
    ```bash
-   CORRUPTIONS_LIST="snow frost fog brightness contrast" \
-   SAVE_DIR="save/PascalVOC20Dataset/eata_continual_weather/" \
-   bash bash/v20/eata_continual.sh
+   bash bash/v20_acdc_matched/no_adapt.sh
+   bash bash/v20_acdc_matched/tent_continual.sh
+   bash bash/v20_acdc_matched/mlmp_continual.sh
+   bash bash/v20_acdc_matched/cotta.sh
+   bash bash/v20_acdc_matched/mlmp_episodic.sh
+   bash bash/v20_acdc_matched/mlmp_divgate_continual.sh
+   bash bash/v20_acdc_matched/tent_divgate_continual.sh
+   bash bash/v20_acdc_matched/sar_continual.sh
    ```
-   Same success criterion.
+   Each runs on **404 imgs/round** (vs ACDC's 406) — same workload, directly overlay-compatible with ACDC trajectories.
 
-3. **Diagnostic on filter rates** after first ~5 rounds of each:
+3. **SAR-DivGate on VOC20 + Cityscapes** (secondary — once ACDC J-result is in):
    ```bash
-   # SAR: fraction of samples filtered out (high entropy)
-   awk -F',' 'NR>2 {f+=$3; n++} END {print "SAR filtered:", f/n}' save/PascalVOC20Dataset/sar_continual_weather/sar_log.txt
-   # EATA: fraction passing non-redundant filter (cosine vs EMA)
-   awk -F',' 'NR>2 {r+=$4; n++} END {print "EATA non-redundant:", r/n}' save/PascalVOC20Dataset/eata_continual_weather/eata_log.txt
+   bash bash/v20/sar_divgate_continual.sh
+   bash bash/cityscapes_continual/sar_divgate_continual.sh
    ```
-   If EATA non-redundant rate < 20%, raise `d_margin` from 0.05 to 0.1–0.2 (smoke test showed 0.05 is too strict).
+   VOC20 likely still hits headroom; goal is to confirm SAR-DivGate doesn't make things worse, and ideally beats SAR's ~70.9.
 
-4. **If VOC20 results show promise**: run same methods on ACDC to confirm they don't break what TENT-DivGate already wins on (ACDC scripts ready under `bash/ACDC_10_round/`).
+4. **If SAR-DivGate ACDC ideal tier passes**: confirm reproducibility across seeds {0, 1, 2}. Then write up. Log `divgate_log.txt` mode-transition timeline to support the story.
 
-5. **If first-pass results are flat or worse**: hyperparam sweep:
-   - SAR: `sam_rho ∈ {0.01, 0.05, 0.1, 0.2}`
-   - EATA: `fisher_alpha ∈ {0, 200, 2000, 20000}` (alpha=0 = SAR-style filter only, no EWC)
-   - Both: `e_margin ∈ {0.5, 1.0, 1.5, 2.0}` if filter rate is extreme
+5. **If SAR-DivGate basic tier fails (W-shape returns)**: raise `h_warning` to 1.5, or drop `monitor_interval` to 25 for faster gate reaction. See §J-1 for the interpretation paths.
+
+6. **EATA** (deferred — implementation complete but never run, eclipsed by SAR results; revisit if SAR-family results stall): `bash/v20/eata_continual.sh`, `bash/ACDC_10_round/eata_continual.sh`. Run command + diagnostic pattern preserved in git history (this section pre-2026-05-25).
 
 ---
 
-## 9. Codebase State — All Methods Currently Registered
+## 12. Codebase State — All Methods Currently Registered
 
-| Method name (CLI) | Class | File | Bash script | Spec |
+| Method name (CLI) | Class | File | Bash scripts | Spec |
 |---|---|---|---|---|
 | `cma_continual` | `CMAContinual` | `adapt/cma_continual.py` | `bash/ACDC_10_round/cma_continual.sh` | [cma_continual_spec.md](cma_continual_spec.md) |
 | `cma_proto_continual` | `CMAProtoContinual` | `adapt/cma_proto_continual.py` | `bash/ACDC_10_round/cma_proto_continual.sh` | [cma_proto_continual_spec.md](cma_proto_continual_spec.md) |
 | `cma_layered_continual` | `CMALayeredContinual` | `adapt/cma_layered_continual.py` | `bash/ACDC_10_round/cma_layered_continual.sh` | [cma_layered_continual_spec.md](cma_layered_continual_spec.md) |
 | `cma_divgate_continual` | `CMADivGateContinual` | `adapt/cma_divgate_continual.py` | `bash/ACDC_10_round/cma_divgate_continual.sh` | [cma_divgate_continual_spec.md](cma_divgate_continual_spec.md) |
-| `tent_divgate_continual` | `TENTDivGateContinual` | `adapt/tent_divgate_continual.py` | `bash/ACDC_10_round/tent_divgate_continual.sh` | [tent_divgate_continual_spec.md](tent_divgate_continual_spec.md) |
-| `mlmp_divgate_continual` | `MLMPDivGateContinual` | `adapt/mlmp_divgate_continual.py` | `bash/{ACDC_10_round,v20,cityscapes_continual}/mlmp_divgate_continual.sh` | (uses same DivGate spec) |
-| `sar_continual` | `SARContinual` | `adapt/sar_continual.py` (+ `adapt/sam.py`) | `bash/{v20,ACDC_10_round}/sar_continual.sh` | [2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) |
+| `tent_divgate_continual` | `TENTDivGateContinual` | `adapt/tent_divgate_continual.py` | `bash/{ACDC_10_round,v20,cityscapes_continual,v20_acdc_matched}/tent_divgate_continual.sh` | [tent_divgate_continual_spec.md](tent_divgate_continual_spec.md) |
+| `mlmp_divgate_continual` | `MLMPDivGateContinual` | `adapt/mlmp_divgate_continual.py` | `bash/{ACDC_10_round,v20,cityscapes_continual,v20_acdc_matched}/mlmp_divgate_continual.sh` | (uses same DivGate spec) |
+| `sar_continual` | `SARContinual` | `adapt/sar_continual.py` (+ `adapt/sam.py`) | `bash/{v20,ACDC_10_round,cityscapes_continual,v20_acdc_matched}/sar_continual.sh` | [2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) |
+| **`sar_divgate_continual`** | **`SARDivGateContinual`** | **`adapt/sar_divgate_continual.py`** | **`bash/{ACDC_10_round,v20,cityscapes_continual}/sar_divgate_continual.sh`** | **[sar_divgate_continual_spec.md](sar_divgate_continual_spec.md)** |
 | `eata_continual` | `EATAContinual` | `adapt/eata_continual.py` | `bash/{v20,ACDC_10_round}/eata_continual.sh` | [2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md) |
 
 Plus the original baselines (`tent_continual`, `mlmp_continual`, `cotta`, `dpcore`, `mlmp` episodic) which are unchanged.
 
-Bash scripts exist under three dataset prefixes: `bash/ACDC_10_round/` (4 conditions, 1120×560), `bash/cityscapes_continual/` (15 corruptions, 1120×560, 500 imgs), `bash/v20/` (15 corruptions, 224×224 single-patch, 1449 imgs). All datasets share the same `main_continual.py` entry point and `evaluate-before-adapt` protocol.
+**Bash script folders**:
+- `bash/ACDC_10_round/` — 4 ACDC conditions, 1120×560, ~100 imgs/condition (~406/round natural)
+- `bash/cityscapes_continual/` — 15 ImageNet-C corruptions, 1120×560, 500 imgs/condition (~7500/round full)
+- `bash/v20/` — 15 ImageNet-C, 224×224 single-patch, 1449 imgs (~21,735 if all 15; ~7245 weather-5)
+- **`bash/v20_acdc_matched/`** — **VOC20 with deterministic 101-img subset × 4 corruptions = 404/round; designed for cross-dataset overlay with ACDC**
 
-All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via `main_continual.py::add_method_specific_args`. Results are saved under `save/ACDCDataset/{save_dir}/results_all_rounds.txt` and parsed by `parse_acdc_results.py` into `acdc_table.tex`.
+**Cross-dataset comparability infrastructure**:
+- `scripts/make_voc_subset.py` — generates deterministic VOC subset split files
+- `--ann_file` CLI arg + `prepare_data(ann_file=...)` kwarg — overrides mmseg dataset split, VOC20/VOC21 only, ignored elsewhere
+
+All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via `main_continual.py::add_method_specific_args`. Results are saved under `save/{DATASET}/{save_dir}/results_all_rounds.txt` and parsed by `parse_acdc_results.py` into `acdc_table.tex`.
+
+**Plotting scripts** (relevant):
+- `plot_acdc_4methods.py` — ACDC 4-method overlay (No-Adapt / MLMP-ep / TENT-DivGate / SAR)
+- `plot_voc20_4methods.py` — same 4-method overlay, VOC20 weather subset
+- `plot_voc20_methods_comparison.py` — 6-method continual comparison on VOC20 (TENT/MLMP × {-continual, -DivGate}, plus CoTTA)
+- `plot_all_methods_comparison.py` — ACDC all-methods overlay (important + faded ablation)
 
 ---
 
-## 10. Reading Map — Where to Find What
+## 13. Reading Map — Where to Find What
 
 | Question | Read |
 |----------|------|
@@ -511,12 +713,16 @@ All methods registered in `adapt/__init__.py::METHOD_CLASSES` and dispatched via
 | Direction A spec / Direction A experimental results | [docs/cma_layered_continual_spec.md](cma_layered_continual_spec.md), this file §2 Phase D |
 | Direction B (CMA base) spec / experimental results | [docs/cma_divgate_continual_spec.md](cma_divgate_continual_spec.md), this file §2 Phase E |
 | Direction B (TENT base) spec / current results | [docs/tent_divgate_continual_spec.md](tent_divgate_continual_spec.md), this file §2 Phase F |
+| SAR/EATA design (Phase I, papers + deviations) | [docs/2026-05-17-sar-eata-v20-design.md](2026-05-17-sar-eata-v20-design.md), this file §6 |
+| **SAR ACDC + VOC20 results, direction bug + fix** | **this file §7** |
+| **SAR-DivGate (Phase J) design** | **[docs/sar_divgate_continual_spec.md](sar_divgate_continual_spec.md), this file §8** |
+| **v20_acdc_matched (Phase K) folder design** | **[docs/v20_acdc_matched_spec.md](v20_acdc_matched_spec.md), this file §9** |
 | Codebase architecture, implementation gotchas | [CLAUDE.md](../CLAUDE.md) |
 | Implementation plan format / step-by-step recipes | `docs/*_plan.md` |
 
 ---
 
-## 11. Key Design Decisions (Quick Reference)
+## 14. Key Design Decisions (Quick Reference)
 
 Made across the project, recorded here for continuity:
 
@@ -532,4 +738,66 @@ Made across the project, recorded here for continuity:
 
 ---
 
-*End of research-arc document. For any detail not covered here, follow the reading map in §7.*
+## 15. Phase L: H1 Validation Experiments — RUN & ANALYZED (2026-06-03)
+
+**H1 (user's hypothesis)**: NA-CLIP (LAION-pretrained) has likely seen images visually similar to ImageNet-C *synthetic* corruptions during pretraining → on synthetic shifts the source weights are already near-optimal → no coherent adaptation direction exists → DivGate's stochastic-restoration equilibrium gets pinned to source. *Native* shifts (real night / adverse weather) are genuinely OOD → a real adaptation direction exists → DivGate can climb. This was meant to explain the **4/4 native win vs 3/3 synthetic loss** pattern (see §2 cross-dataset table / memory).
+
+Two experiments ran on GPU 3, both complete:
+- **Exp 1 — gradient cosine**: per-image `cos(∂L_TENT/∂{γ,β}, ∂L_CE/∂{γ,β})` at source weights. H1 predicts native cos > 0, synthetic cos ≈ 0. (3500 images: 6 native conditions × 500 + 30 synthetic conditions × ~100.)
+- **Exp 3 — severity sweep**: source mIoU at corruption severity 1→5 on VOC20 and Cityscapes, all 15 ImageNet-C corruptions × 5 severities × 2 datasets = 150 cells. H1 predicts flat decay (CLIP robust) on synthetic. **Both datasets now complete (75 cells each).**
+
+Results / figures live in `experiments/h1_validation/results/{exp1,exp3}/` (gitignored). Plot scripts: `experiments/h1_validation/{exp1_gradient_cosine,exp3_severity_sweep}/plot.py`.
+
+### L-1: Exp 1 verdict — H1's "no direction" claim is REFUTED
+
+| Group | median cos | %>0 | median ‖g_sup‖ |
+|---|---|---|---|
+| **Native** (ACDC/DZ/ND) | **+0.494** | 98% | 0.838 |
+| **Cityscapes** synthetic | **+0.385** | — | 0.852 |
+| **VOC20** synthetic | **+0.197** | — | 0.547 |
+
+**The "native vs synthetic" axis collapses into "VOC vs everything else."** Cityscapes synthetic corruptions have nearly the same gradient geometry as native real shifts (cos 0.39 vs 0.49; ‖g_sup‖ 0.85 vs 0.84) — the TENT entropy gradient points the *correct* way on synthetic Cityscapes, directly contradicting H1's "cos ≈ 0 on synthetic" prediction. Even VOC's 0.20 is > 0. What dragged the old 4-corruption "synthetic ≈ 0.30" snapshot down was **VOC alone**.
+
+Within Cityscapes the corruption *type* matters: digital (jpeg 0.48, pixelate 0.47, glass_blur 0.48, motion 0.46, fog 0.45) ≈ native; noise/zoom lower (gaussian 0.28, zoom 0.26); `frost` an outlier at 0.14 **despite** ‖g_sup‖ 0.99 (real headroom the entropy gradient can't capture).
+
+### L-2: Exp 3 verdict — H1's "near-optimal source" claim holds for VOC only
+
+Full 15-corruption mean relative drop sev1→5: **Cityscapes 19.3%** (steep) vs **VOC20 11.0%** (flat); Cityscapes source mIoU 20–30 (same regime as native: ACDC 23.3 / DZ 20.2 / ND 31.0), VOC source 73–78 (near-ceiling).
+
+The four cells backfilled 2026-06-03 (`elastic_transform`, `pixelate`, `jpeg_compression`, `zoom_blur` sev3-5) revealed the digital category is **Cityscapes' robust zone** and produced one clean reversal:
+
+| Corruption | Cityscapes drop | VOC20 drop | note |
+|---|---|---|---|
+| **elastic_transform** | **0.6%** (flat) | **16.6%** (steep) | only corruption where City > VOC robustness |
+| pixelate | 3.1% | 2.0% | both flat |
+| jpeg_compression | 11.8% | 5.3% | City steeper (normal) |
+| zoom_blur | 28.2% | 22.5% | both steep |
+
+So even *within* Cityscapes it is not uniform: noise + contrast are genuinely OOD (gaussian 42%, contrast 41.6%, shot 28.8%); digital (elastic/pixelate/jpeg) sits in H1's "CLIP already robust" regime — but only digital. This matches Exp 1 (Cityscapes digital had the highest cosines). The elastic reversal is interpretable: VOC's fine object boundaries are sensitive to local warps; Cityscapes' large-region semantics (road/building/sky) are not.
+
+### L-3: Joint conclusion — what actually discriminates DivGate success
+
+| | per-image grad direction (cos) | headroom (‖g_sup‖ / source mIoU) | DivGate result |
+|---|---|---|---|
+| Native (ACDC/DZ/ND) | high ~0.49 | large | **✅ beats episodic** |
+| **Cityscapes** synthetic | **high ~0.39** | **large** | ❌ fails |
+| VOC20 synthetic | low ~0.20 | small (near-optimal) | ❌ fails |
+
+H1 as a *single* explanation is wrong. The two synthetic failures have **different mechanisms**:
+1. **VOC fails from genuine lack of headroom** — source already ~76 mIoU, weak gradient (cos 0.2, small ‖g_sup‖). The original "near-optimal source" intuition is cleanly true *here only*.
+2. **Cityscapes fails despite having headroom AND a correct per-image gradient direction** indistinguishable from native. Therefore its failure **cannot** be a per-image geometry / headroom problem — it must come from the **continual-stream temporal dynamics** (15 corruptions × 500 = 7500 imgs/round with abrupt corruption-type switches vs ACDC's 406/round, 4 conditions). This is the new testable hypothesis **H2**.
+
+**Headline for paper motivation**: per-image gradient geometry cannot separate "DivGate succeeds (native)" from "DivGate fails (Cityscapes synthetic)" — both have cos ≈ 0.4 and large headroom. CTTA failure on synthetic corruptions is therefore a *temporal-dynamics* problem, not a per-image-signal problem; and VOC vs Cityscapes are two distinct failure modes (no headroom vs temporal collapse).
+
+### L-4: H2 (next test, cheap)
+
+Shorten / narrow the Cityscapes stream (e.g. weather-5 or a 406-matched subset) and re-run DivGate. If it then approaches the native win, the failure is confirmed to come from stream length / heterogeneity, not the corruption being synthetic.
+
+### L-5: Operational notes from this phase
+- **Disk-quota truncation**: running the Cityscapes backfill while `/home` was at quota silently wrote one **truncated** cache file (`*_zoom_blur_s3.npy`, 1.05M vs 6.29M payload), which crashed that cell with a numpy reshape error. Deleting the file + re-running fixed it. A full scan of all 37500 Cityscapes corruption-cache files (header-declared size vs actual payload) found **0 other corrupt files** — the truncation hit only the in-flight write.
+- `--skip_done` reads the aggregate `all.csv`, **not** the `raw/` dir — so deleting `results/exp3/raw/` (already parsed into CSV) is safe and does not force re-runs.
+- Backfilling only missing cells: `python -m experiments.h1_validation.exp3_severity_sweep.run --dataset Cityscapes --corruption <name> --severity <n> --skip_done`.
+
+---
+
+*End of research-arc document. For any detail not covered here, follow the reading map in §13.*

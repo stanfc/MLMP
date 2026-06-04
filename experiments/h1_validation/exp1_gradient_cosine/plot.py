@@ -153,6 +153,68 @@ def plot_scatter(groups, out_path: str):
     plt.close(fig)
 
 
+def plot_gsup_city_vs_voc(rows, out_path: str):
+    """Cityscapes vs VOC20: scatter of cos vs log10||g_sup|| with marginal
+    ||g_sup|| distributions on top. Focuses on the per-image g_sup difference
+    between the two synthetic datasets (Cityscapes has larger g_sup = more
+    headroom; VOC20 is bunched at small g_sup = source near-optimal)."""
+    series = OrderedDict([
+        ("Cityscapes", {"color": "#dc2626", "x": [], "y": []}),
+        ("VOC20_matched", {"color": "#2563eb", "x": [], "y": []}),
+    ])
+    for r in rows:
+        ds = r["dataset"]
+        if ds in series:
+            series[ds]["x"].append(np.log10(r["norm_sup"] + 1e-12))
+            series[ds]["y"].append(r["cos"])
+
+    fig = plt.figure(figsize=(9, 7), dpi=160)
+    fig.patch.set_facecolor("white")
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 4], hspace=0.04)
+    ax_top = fig.add_subplot(gs[0])
+    ax = fig.add_subplot(gs[1], sharex=ax_top)
+
+    # shared bins across both datasets so the histograms are comparable
+    all_x = np.concatenate([np.array(s["x"]) for s in series.values()])
+    bins = np.linspace(all_x.min(), all_x.max(), 46)
+
+    for label, s in series.items():
+        x = np.array(s["x"]); y = np.array(s["y"])
+        med = np.median(x)
+        # main scatter
+        ax.scatter(x, y, c=s["color"], alpha=0.35, s=16,
+                   edgecolors="none", label=f"{label}  (n={len(x)})")
+        # marginal ||g_sup|| distribution (density) on top
+        ax_top.hist(x, bins=bins, color=s["color"], alpha=0.45, density=True)
+        ax_top.axvline(med, color=s["color"], linewidth=1.6, linestyle="-")
+        ax.axvline(med, color=s["color"], linewidth=1.2, linestyle="--", alpha=0.8)
+
+    ax.axhline(0.0, color="#111827", linewidth=1.0)
+    ax.set_facecolor("#fafafa")
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
+    ax.set_xlabel(r"$\log_{10}\,\|g_{sup}\|$   (supervised gradient magnitude = headroom)", fontsize=11)
+    ax.set_ylabel(r"$\cos(g_{tent},\, g_{sup})$   (direction alignment)", fontsize=11)
+    ax.legend(loc="lower right", framealpha=0.9)
+
+    ax_top.set_facecolor("#fafafa")
+    ax_top.grid(True, linestyle="--", linewidth=0.5, alpha=0.4)
+    ax_top.set_ylabel("density", fontsize=9)
+    ax_top.tick_params(labelbottom=False)
+    # annotate the two medians on the marginal
+    cmed = np.median(series["Cityscapes"]["x"])
+    vmed = np.median(series["VOC20_matched"]["x"])
+    ax_top.set_title(
+        "Exp 1 — Cityscapes vs VOC20: per-image gradient alignment & headroom\n"
+        rf"median $\|g_{{sup}}\|$:  Cityscapes $10^{{{cmed:.2f}}}{{=}}{10**cmed:.2f}$   "
+        rf"vs  VOC20 $10^{{{vmed:.2f}}}{{=}}{10**vmed:.2f}$   "
+        "(right ⇒ more to fix; up ⇒ TENT points the right way)",
+        fontsize=10, pad=8)
+
+    fig.savefig(out_path + ".png", bbox_inches="tight")
+    fig.savefig(out_path + ".svg", bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default="experiments/h1_validation/results/exp1/all.csv")
@@ -168,7 +230,8 @@ def main():
     plot_boxplot(groups, os.path.join(args.out_dir, "cosine_boxplot"))
     plot_bar(groups, os.path.join(args.out_dir, "cosine_bar"))
     plot_scatter(groups, os.path.join(args.out_dir, "norm_vs_cos_scatter"))
-    print(f"[plot] Saved 3 figure pairs to {args.out_dir}")
+    plot_gsup_city_vs_voc(rows, os.path.join(args.out_dir, "gsup_city_vs_voc"))
+    print(f"[plot] Saved 4 figure pairs to {args.out_dir}")
 
 
 if __name__ == "__main__":

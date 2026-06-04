@@ -28,6 +28,19 @@ VOC_20 = [
     "pottedplant", "sheep", "sofa", "train", "tvmonitor",
 ]
 
+# Full ImageNet-C corruption set (15 standard corruptions, category order:
+# noise / blur / weather / digital). Matches utils.imagecorruptions
+# get_corruption_names() and the CORRUPTIONS_LIST in
+# bash/cityscapes_continual/*.sh. Used as the `conditions` for synthetic
+# datasets so both exp1 (cosine @ sev=5) and exp3 (severity sweep) cover the
+# same corruptions.
+IMAGENET_C_15 = [
+    "gaussian_noise", "shot_noise", "impulse_noise",          # noise
+    "defocus_blur", "glass_blur", "motion_blur", "zoom_blur",  # blur
+    "snow", "frost", "fog", "brightness", "contrast",          # weather
+    "elastic_transform", "pixelate", "jpeg_compression",       # digital
+]
+
 
 # Driving-style preprocessing — every existing bash script uses the
 # 224×224 patch / stride=112 setup even for 1120×560 inputs.
@@ -82,7 +95,7 @@ DATASET_REGISTRY: dict[str, dict[str, Any]] = {
         "kind": "synthetic",
         "main_dataset_name": "PascalVOC20Dataset",
         "data_dir": "data/VOC/VOC2012/",
-        "conditions": ["snow", "fog", "frost", "contrast"],
+        "conditions": IMAGENET_C_15,
         "class_names": VOC_20,
         "prepare_data_kwargs": _VOC_KWARGS,
     },
@@ -91,7 +104,7 @@ DATASET_REGISTRY: dict[str, dict[str, Any]] = {
         "main_dataset_name": "CityscapesDataset",
         # Bash scripts use the singular folder name "Cityscape/" — preserved here
         "data_dir": "data/Cityscape/",
-        "conditions": ["snow", "frost", "fog", "brightness", "contrast"],
+        "conditions": IMAGENET_C_15,
         "class_names": CITYSCAPES_19,
         "prepare_data_kwargs": _DRIVING_KWARGS,
     },
