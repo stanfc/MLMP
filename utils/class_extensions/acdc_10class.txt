@@ -1,0 +1,10 @@
+road
+sidewalk
+building
+sign and pole
+vegetation
+sky
+person
+car
+large vehicle
+two-wheeler

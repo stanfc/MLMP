@@ -1,7 +1,30 @@
 import copy
+import os
 import os.path as osp
 
-from torch.utils.data import DataLoader
+import torch
+from torch.utils.data import DataLoader, ConcatDataset
+
+
+def _worker_init_limit_threads(worker_id):
+    """DataLoader worker_init_fn — limit each worker's PyTorch thread pool.
+
+    Default behavior: every dataloader worker (a forked process) calls
+    `torch.set_num_threads(cpu_count())` and ends up with ~256 threads on a
+    256-core machine. With many concurrent experiments × many workers each,
+    this saturates the user thread limit (ulimit -u) and triggers
+    'res = 11' / 'Connection reset by peer' errors.
+
+    This function caps each worker's PyTorch intra-op thread count to
+    OMP_NUM_THREADS (default 4), reducing per-worker thread count from
+    ~260 to ~10. Has no effect on dataloading throughput because PyTorch
+    is not used inside the worker for matrix ops here.
+    """
+    n = int(os.environ.get('OMP_NUM_THREADS', '4'))
+    try:
+        torch.set_num_threads(n)
+    except Exception:
+        pass
 
 from mmcv.transforms.loading import LoadImageFromFile
 from mmcv.transforms.processing import Resize
@@ -75,6 +98,112 @@ class ACDCDataset(BaseSegDataset):
                  **kwargs) -> None:
         super().__init__(
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
+
+
+# ACDC label remapping for class-merging experiments.
+# Original 19-class index (Cityscapes train IDs):
+#   0:road  1:sidewalk  2:building  3:wall  4:fence  5:pole
+#   6:traffic light  7:traffic sign  8:vegetation  9:terrain
+#   10:sky  11:person  12:rider  13:car  14:truck  15:bus
+#   16:train  17:motorcycle  18:bicycle
+# Each list maps original-class-idx -> super-class-idx.
+ACDC_3CLASS_REMAP = [
+    0, 0, 1, 1, 1, 1,   # road sidewalk -> 0;  building wall fence pole -> 1
+    1, 1, 1, 0,         # traffic light/sign vegetation -> 1;  terrain -> 0
+    1,                  # sky -> 1
+    2, 2, 2, 2, 2, 2, 2, 2,  # person..bicycle -> 2
+]
+# 6-class super-class names (acdc_6class.txt order):
+#   0:"road"               ← road, sidewalk, terrain
+#   1:"building"           ← building, wall, fence
+#   2:"sign and pole"      ← pole, traffic light, traffic sign
+#   3:"vegetation"         ← vegetation
+#   4:"sky"                ← sky
+#   5:"vehicle and person" ← person, rider, car, truck, bus, train, motorcycle, bicycle
+ACDC_6CLASS_REMAP = [
+    0, 0,                # road, sidewalk        -> 0 road
+    1, 1, 1,             # building, wall, fence -> 1 building
+    2, 2, 2,             # pole, traffic light, traffic sign -> 2 sign and pole
+    3,                   # vegetation -> 3 vegetation
+    0,                   # terrain    -> 0 road (grouped with ground)
+    4,                   # sky        -> 4 sky
+    5, 5, 5, 5, 5, 5, 5, 5,  # person..bicycle -> 5 vehicle and person
+]
+
+# 10-class super-class names (acdc_10class.txt order):
+#   0:"road"          ← road
+#   1:"sidewalk"      ← sidewalk, terrain
+#   2:"building"      ← building, wall, fence
+#   3:"sign and pole" ← pole, traffic light, traffic sign
+#   4:"vegetation"    ← vegetation
+#   5:"sky"           ← sky
+#   6:"person"        ← person, rider
+#   7:"car"           ← car
+#   8:"large vehicle" ← truck, bus, train
+#   9:"two-wheeler"   ← motorcycle, bicycle
+ACDC_10CLASS_REMAP = [
+    0,                  # road
+    1,                  # sidewalk
+    2, 2, 2,            # building, wall, fence -> 2 building
+    3, 3, 3,            # pole, traffic light, traffic sign -> 3 sign and pole
+    4,                  # vegetation
+    1,                  # terrain -> 1 sidewalk
+    5,                  # sky
+    6, 6,               # person, rider -> 6 person
+    7,                  # car
+    8, 8, 8,            # truck, bus, train -> 8 large vehicle
+    9, 9,               # motorcycle, bicycle -> 9 two-wheeler
+]
+
+
+@DATASETS.register_module()
+class ACDCMerged3Dataset(ACDCDataset):
+    """ACDC with 19 classes merged into 3 super-classes (flat / vertical / movable).
+
+    Pipeline must include {'type': 'RemapLabels', 'mapping': ACDC_3CLASS_REMAP}
+    so the GT label is remapped at load time. Image data is identical to ACDCDataset.
+    """
+    METAINFO = dict(
+        classes=('flat surface', 'vertical structure', 'movable object'),
+        palette=[[128, 64, 128], [70, 70, 70], [220, 20, 60]],
+    )
+    class_extensions, extentions_to_real_class_idx = get_cls_idx(
+        "utils/class_extensions/acdc_3class.txt")
+
+
+@DATASETS.register_module()
+class ACDCMerged6Dataset(ACDCDataset):
+    """ACDC with 19 classes merged into 6 OVSS-natural super-classes.
+    Class names (in order, as used directly as CLIP prompts):
+      road / building / sign and pole / vegetation / sky / vehicle and person
+    """
+    METAINFO = dict(
+        classes=('road', 'building', 'sign and pole',
+                 'vegetation', 'sky', 'vehicle and person'),
+        palette=[[128, 64, 128], [70, 70, 70], [153, 153, 153],
+                 [107, 142, 35], [70, 130, 180], [0, 0, 142]],
+    )
+    class_extensions, extentions_to_real_class_idx = get_cls_idx(
+        "utils/class_extensions/acdc_6class.txt")
+
+
+@DATASETS.register_module()
+class ACDCMerged10Dataset(ACDCDataset):
+    """ACDC with 19 classes merged into 10 OVSS-natural super-classes.
+    Class names (used directly as CLIP prompts):
+      road / sidewalk / building / sign and pole / vegetation / sky /
+      person / car / large vehicle / two-wheeler
+    """
+    METAINFO = dict(
+        classes=('road', 'sidewalk', 'building', 'sign and pole',
+                 'vegetation', 'sky', 'person', 'car',
+                 'large vehicle', 'two-wheeler'),
+        palette=[[128, 64, 128], [244, 35, 232], [70, 70, 70], [153, 153, 153],
+                 [107, 142, 35], [70, 130, 180], [220, 20, 60], [0, 0, 142],
+                 [0, 60, 100], [119, 11, 32]],
+    )
+    class_extensions, extentions_to_real_class_idx = get_cls_idx(
+        "utils/class_extensions/acdc_10class.txt")
 
 
 @DATASETS.register_module()
@@ -445,6 +574,47 @@ mm_acdc_cfg_base = {
                 ]
 }
 
+# Class-merging variants: same as base, but with a RemapLabels step right after
+# LoadAnnotations so the GT label is collapsed before metric computation.
+mm_acdc_3class_cfg_base = {
+    'type': 'ACDCMerged3Dataset',
+    'data_root': data_dir,
+    'data_prefix': {'img_path': '', 'seg_map_path': ''},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                # IMPORTANT: keep ResizeAndPatchify at index 2 — prepare_data
+                # patches that slot to inject init_resize/patch_size/stride.
+                # RemapLabels is placed AFTER ResizeAndPatchify (resize uses
+                # nearest-neighbor on the GT, so original IDs are preserved
+                # and remapping is equivalent on a per-pixel basis).
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'RemapLabels', 'mapping': ACDC_3CLASS_REMAP},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+mm_acdc_6class_cfg_base = {
+    'type': 'ACDCMerged6Dataset',
+    'data_root': data_dir,
+    'data_prefix': {'img_path': '', 'seg_map_path': ''},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'RemapLabels', 'mapping': ACDC_6CLASS_REMAP},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+mm_acdc_10class_cfg_base = {
+    'type': 'ACDCMerged10Dataset',
+    'data_root': data_dir,
+    'data_prefix': {'img_path': '', 'seg_map_path': ''},
+    'pipeline': [{'type': 'LoadImageFromFile'},
+                {'type': 'LoadAnnotations'},
+                {'type': 'ResizeAndPatchify', 'resize': resize, 'patch_size': patch_size, 'patch_stride': patch_stride},
+                {'type': 'RemapLabels', 'mapping': ACDC_10CLASS_REMAP},
+                {'type': 'ToTensorAndNormalize', 'mean': CLIP_MEAN, 'std': CLIP_STD},
+                ]
+}
+
 mm_pascalvoc20_cfg = {
     'type': 'PascalVOC20Dataset',
     'data_root': data_dir,
@@ -498,7 +668,7 @@ mm_pascalcontect60_cfg = {
 
 
 
-def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None):
+def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corruption="original", batch_size=128, num_workers=1, shuffle=True, corruption_cache_dir=None, split="val", subset_size=None, subset_seed=0, corruption_severity=5, acdc_overlay_corruption=None):
     
     # # print everything
     # print("\n+++++++ Data Preparation +++++++")
@@ -525,8 +695,20 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
     elif dataset == "ACDCDataset":
         mm_config = copy.deepcopy(mm_acdc_cfg_base)
         # ACDC condition is encoded in the data path, not as a synthetic transform
-        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/val'
-        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/val'
+        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/{split}'
+        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/{split}'
+    elif dataset == "ACDCMerged3Dataset":
+        mm_config = copy.deepcopy(mm_acdc_3class_cfg_base)
+        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/{split}'
+        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/{split}'
+    elif dataset == "ACDCMerged6Dataset":
+        mm_config = copy.deepcopy(mm_acdc_6class_cfg_base)
+        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/{split}'
+        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/{split}'
+    elif dataset == "ACDCMerged10Dataset":
+        mm_config = copy.deepcopy(mm_acdc_10class_cfg_base)
+        mm_config['data_prefix']['img_path'] = f'rgb_anon/{corruption}/{split}'
+        mm_config['data_prefix']['seg_map_path'] = f'gt/{corruption}/{split}'
     elif dataset == "PascalVOC20Dataset":
         mm_config = copy.deepcopy(mm_pascalvoc20_cfg)
     elif dataset == "PascalVOC21Dataset":
@@ -549,30 +731,86 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
     ### add corruption to the pipline
     # Find the index of 'LoadImageFromFile' in the pipeline
     # ACDC: condition is encoded in the data path already — no synthetic transform needed
+    # UNLESS acdc_overlay_corruption is set, in which case we add a synthetic
+    # corruption on TOP of the weather condition (real shift + synthetic noise).
     _acdc_conditions = {'fog', 'night', 'rain', 'snow'}
-    if dataset == "ACDCDataset" or corruption == "original":
+    _acdc_datasets = {"ACDCDataset", "ACDCMerged3Dataset",
+                      "ACDCMerged6Dataset", "ACDCMerged10Dataset"}
+
+    # Decide which synthetic corruption (if any) to overlay on top of the image.
+    overlay_corruption = None
+    if dataset in _acdc_datasets:
+        if acdc_overlay_corruption:
+            overlay_corruption = acdc_overlay_corruption
+            print(f"+ ACDC overlay corruption '{overlay_corruption}' (severity {corruption_severity})"
+                  f" on top of condition '{corruption}'")
+        else:
+            print("No corruption added to the pipeline (ACDC weather only)")
+    elif corruption == "original":
         print("No corruption added to the pipeline")
     else:
+        overlay_corruption = corruption
+
+    if overlay_corruption is not None:
         load_image_index = next(
             (i for i, transform in enumerate(mm_config['pipeline']) if transform['type'] == 'LoadImageFromFile'),
             None
-        )  
-        # Insert the new transform right after 'LoadImageFromFile'
+        )
         if load_image_index is not None:
             corrupt_transform = {
                 'type': 'CorruptTransform',
-                'corruption_severity': 5,
-                'corruption_name': corruption,
+                'corruption_severity': int(corruption_severity),
+                'corruption_name': overlay_corruption,
                 'cache_dir': corruption_cache_dir or osp.join(osp.dirname(data_dir.rstrip('/')), '.cache', 'corruptions'),
             }
             mm_config['pipeline'].insert(load_image_index + 1, corrupt_transform)
-
-            print(f"+ Corruption '{corruption}' added to the pipeline")
+            print(f"+ Corruption '{overlay_corruption}' (sev {corruption_severity}) added to the pipeline")
         else:
             raise ValueError("LoadImageFromFile not found in the pipeline")
 
     ### bulid the dataset from the config using mmseg registry
-    dataset = DATASETS.build(mm_config)
+    # ACDC supports a combined split like "train+val" — build each part
+    # separately and ConcatDataset them. METAINFO/ignore_index are taken
+    # from the first part (identical across ACDC splits).
+    if "+" in split and dataset in _acdc_datasets:
+        parts = split.split("+")
+        sub_datasets = []
+        for s in parts:
+            sub_cfg = copy.deepcopy(mm_config)
+            sub_cfg['data_prefix']['img_path'] = f'rgb_anon/{corruption}/{s}'
+            sub_cfg['data_prefix']['seg_map_path'] = f'gt/{corruption}/{s}'
+            sub_datasets.append(DATASETS.build(sub_cfg))
+        dataset = ConcatDataset(sub_datasets)
+        dataset.METAINFO = sub_datasets[0].METAINFO
+        dataset.ignore_index = sub_datasets[0].ignore_index
+        dataset.class_extensions = getattr(sub_datasets[0], 'class_extensions', None)
+        dataset.extentions_to_real_class_idx = getattr(
+            sub_datasets[0], 'extentions_to_real_class_idx', None)
+    else:
+        dataset = DATASETS.build(mm_config)
+
+    ### Optional fixed-size subset (deterministic by subset_seed).
+    # Use this to align update count across datasets with different val sizes
+    # (e.g. ACDC ~100 imgs/condition vs Cityscapes 500 vs VOC 1449).
+    if subset_size is not None and subset_size > 0:
+        import numpy as _np
+        full_len = len(dataset)
+        n = min(int(subset_size), full_len)
+        if n < full_len:
+            rng = _np.random.RandomState(int(subset_seed))
+            keep_idx = sorted(rng.choice(full_len, n, replace=False).tolist())
+            from torch.utils.data import Subset as _Subset
+            # Preserve METAINFO / ignore_index that downstream code may read.
+            meta = dataset.METAINFO
+            ig = getattr(dataset, 'ignore_index', None)
+            cext = getattr(dataset, 'class_extensions', None)
+            cext_map = getattr(dataset, 'extentions_to_real_class_idx', None)
+            dataset = _Subset(dataset, keep_idx)
+            dataset.METAINFO = meta
+            if ig is not None: dataset.ignore_index = ig
+            if cext is not None: dataset.class_extensions = cext
+            if cext_map is not None: dataset.extentions_to_real_class_idx = cext_map
+            print(f"+ Subset: kept {n}/{full_len} samples (seed={subset_seed})")
 
     ### bulid the dataloader
     # if num_workers == 0:
@@ -582,9 +820,21 @@ def prepare_data(dataset, data_dir, init_resize, patch_size, patch_stride, corru
     
     persistent_workers = False
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, 
+    # Use 'spawn' multiprocessing context for DataLoader workers. Default is
+    # 'fork', which inherits the main process's PyTorch thread pool (~256 threads
+    # on a 256-core box). 'spawn' creates a fresh Python process that re-reads
+    # OMP_NUM_THREADS / MKL_NUM_THREADS from the env, so each worker only opens
+    # ~10 threads instead of ~260.
+    # Trade-off: spawn workers take ~5-10s to start (re-import torch/numpy)
+    # vs near-instant for fork. Acceptable for 150-round runs.
+    import torch.multiprocessing as _tmp
+    _spawn_ctx = _tmp.get_context('spawn') if num_workers > 0 else None
+
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers,
                             collate_fn=custom_collate, persistent_workers=persistent_workers, pin_memory=True,
-                            shuffle=shuffle)
+                            shuffle=shuffle,
+                            worker_init_fn=_worker_init_limit_threads,
+                            multiprocessing_context=_spawn_ctx)
 
     classes = dataset.METAINFO['classes']
 

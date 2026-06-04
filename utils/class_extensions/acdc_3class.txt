@@ -1,0 +1,3 @@
+road, sidewalk, terrain
+building, wall, fence, pole, trafficlight, trafficsign, vegetation, sky
+person, rider, car, truck, bus, train, motorcycle, bicycle

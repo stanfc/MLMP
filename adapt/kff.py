@@ -108,6 +108,12 @@ class PromptBase:
         key_tensor = torch.stack([p[0] for p in self.set])
         is_ID = True
         key_match = torch.norm(key - key_tensor, p=2, dim=1)
+        # Debug: print actual L2 distances vs threshold so we can see why
+        # ID/OOD decisions go the way they do.
+        if getattr(self, 'verbose', False):
+            min_d = key_match.min().item()
+            print(f"  [PromptBase] thr={self.thr:.3f}  min_dist={min_d:.4f}  "
+                  f"all_dists={[f'{d:.3f}' for d in key_match.tolist()]}")
         key_match_masked = torch.where(key_match <= self.thr, key_match,
                                        torch.tensor(float('inf'), dtype=key_match.dtype,
                                                     device=key_match.device))
@@ -157,8 +163,12 @@ class cls_prompt_gen:
         for i in range(output.shape[0]):
             p = None
             if self.num == 0:
+                # Zero-init cls_prompt (departs from KFF's xavier-uniform init).
+                # Rationale: MLMP's evaluate-before-adapt protocol attaches this
+                # cls_prompt to the model BEFORE adapt() runs. Random init would
+                # corrupt evaluate(); zero init keeps evaluate ≈ no-adapt baseline
+                # until adapt() actually trains the prompt.
                 p = nn.Parameter(torch.zeros(1, self.length, self.dim))
-                nn.init.uniform_(p.data, -self.val, self.val)
                 self.record.append([-1])
             else:
                 key_tensor = torch.stack([self.set[j][0].squeeze(0) for j in range(len(self.set))], dim=0)
@@ -407,6 +417,8 @@ class KFF(nn.Module):
 
         # Prompt bases.
         self.prompt_base = PromptBase(max_len=n_d, ema_alpha=ema_alpha, tau=tau, thr_d=thr_d)
+        # Forward verbose flag to PromptBase so it can print L2 distances.
+        self.prompt_base.verbose = verbose_kff
         self.cls_prompt_generator = cls_prompt_gen(
             val=self.model.visual.prompt_init_val,
             dim=self.model.visual.prompt_dim,

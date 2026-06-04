@@ -5,6 +5,17 @@ import argparse
 
 # Third-party
 import torch
+# Use 'file_system' sharing strategy to avoid 'Connection reset by peer' errors
+# when many dataloader workers run simultaneously across multiple experiments.
+# Recommended by PyTorch docs for high-concurrency dataloader scenarios.
+torch.multiprocessing.set_sharing_strategy('file_system')
+# Limit PyTorch intra/inter-op threads. On a 256-core box PyTorch defaults to
+# spawning ~256 threads per process; with many concurrent experiments this
+# saturates the user thread limit and causes OpenCV/MKL spawn failures.
+# Honor OMP_NUM_THREADS / MKL_NUM_THREADS env vars when present, else fall back to 4.
+_n_intra = int(os.environ.get('OMP_NUM_THREADS', '4'))
+torch.set_num_threads(_n_intra)
+torch.set_num_interop_threads(min(2, _n_intra))
 import numpy as np
 from tqdm import tqdm
 
@@ -56,7 +67,9 @@ def argparser():
     # ----------------------------------------
     parser.add_argument(
         '--dataset', type=str, default='ACDCDataset',
-        choices=('ACDCDataset', 'CityscapesDataset',
+        choices=('ACDCDataset', 'ACDCMerged3Dataset', 'ACDCMerged6Dataset',
+                 'ACDCMerged10Dataset',
+                 'CityscapesDataset',
                  'COCOStuffDataset', 'COCOObjectDataset',
                  'PascalVOC20Dataset', 'PascalVOC21Dataset',
                  'PascalContext59Dataset', 'PascalContext60Dataset'),
@@ -77,12 +90,46 @@ def argparser():
         )
     )
     parser.add_argument('--class_extensions', action='store_true')
+    parser.add_argument(
+        '--split', type=str, default='val',
+        help=(
+            'Dataset split (ACDC only). Default "val" preserves existing behaviour. '
+            'Use "train+val" to concatenate ACDC train and val splits per condition.'
+        )
+    )
+    parser.add_argument(
+        '--subset_size', type=int, default=None,
+        help=(
+            'Optional: randomly subsample N images per corruption (deterministic '
+            'by --subset_seed). Used to align per-round update count across '
+            'datasets of different val sizes (e.g. 100 to match ACDC).'
+        )
+    )
+    parser.add_argument('--subset_seed', type=int, default=0,
+                        help='Seed for --subset_size sampling')
+    parser.add_argument(
+        '--acdc_overlay_corruptions', nargs='+', type=str, default=None,
+        help=(
+            'ACDC only: paired list (same length as --corruptions_list). '
+            'For each ACDC condition, overlay this synthetic corruption on top '
+            'of the weather images. Example: --acdc_overlay_corruptions '
+            'gaussian_noise shot_noise defocus_blur jpeg_compression '
+            '(paired with fog night rain snow).'
+        )
+    )
+    parser.add_argument(
+        '--corruption_severity', type=int, default=5,
+        help='Synthetic corruption severity (1-5). Default 5 matches existing Cityscapes/V20 runs.'
+    )
 
     # ----------------------------------------
     # Model
     # ----------------------------------------
     parser.add_argument('--ovss_type', type=str, default='naclip')
     parser.add_argument('--ovss_backbone', type=str, default='ViT-L/14')
+    parser.add_argument('--catseg_checkpoint', type=str, default=None,
+                        help='Path to a CAT-Seg pretrained checkpoint '
+                             '(only used when --ovss_type catseg)')
 
     # ----------------------------------------
     # Adaptation
@@ -183,9 +230,239 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--prompt_integration', type=str, default='loss')
         parser.add_argument('--alpha_cls', type=float, default=1.0)
 
+    elif method == 'mlmp_topk_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=0.0,
+                            help='ILE weight; 0 = no ILE (recommended for CTTA)')
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Fraction of highest-confidence pixels to keep in loss')
+
+    elif method == 'mlmp_minprompt_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0,
+                            help='ILE weight; 0 = no ILE (recommended for CTTA)')
+
+    elif method == 'mlmp_topk_minprompt_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0,
+                            help='ILE weight; 0 = no ILE (recommended for CTTA)')
+        parser.add_argument('--top_k_percent', type=float, default=0.2)
+
+    elif method == 'mlmp_topk_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--top_k_percent', type=float, default=0.2)
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'mlmp_topk_smooth_anchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--top_k_percent', type=float, default=0.2)
+        parser.add_argument('--h_ceil', type=float, default=1.8)
+        parser.add_argument('--h_floor', type=float, default=1.5)
+        parser.add_argument('--lag_scale', type=float, default=90.0)
+        parser.add_argument('--max_lag', type=int, default=3000)
+        parser.add_argument('--rst', type=float, default=0.005)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    elif method == 'mlmp_minprompt_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'mlmp_minprompt_smooth_anchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--h_ceil', type=float, default=1.8)
+        parser.add_argument('--h_floor', type=float, default=1.5)
+        parser.add_argument('--lag_scale', type=float, default=90.0)
+        parser.add_argument('--max_lag', type=int, default=3000)
+        parser.add_argument('--rst', type=float, default=0.005)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    elif method == 'mlmp_topk_minprompt_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--top_k_percent', type=float, default=0.2)
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'mlmp_topk_minprompt_smooth_anchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+        parser.add_argument('--top_k_percent', type=float, default=0.2)
+        parser.add_argument('--h_ceil', type=float, default=1.8)
+        parser.add_argument('--h_floor', type=float, default=1.5)
+        parser.add_argument('--lag_scale', type=float, default=90.0)
+        parser.add_argument('--max_lag', type=int, default=3000)
+        parser.add_argument('--rst', type=float, default=0.005)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    elif method == 'mlmp_simple_eval_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=0.0)
+
+    elif method == 'tent_uaml_eval_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+
+    elif method == 'mlmp_smooth_anchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=1.0)
+        parser.add_argument('--h_ceil', type=float, default=1.8,
+                            help='H_margin >= h_ceil -> no restore.')
+        parser.add_argument('--h_floor', type=float, default=1.5,
+                            help='H_margin <= h_floor -> restore toward frozen source.')
+        parser.add_argument('--lag_scale', type=float, default=90.0,
+                            help='lag(H) = lag_scale / (H - h_floor). Default 90 gives lag=300 at H=1.8.')
+        parser.add_argument('--max_lag', type=int, default=3000,
+                            help='Cap on lag; lag > max_lag falls back to source snapshot.')
+        parser.add_argument('--rst', type=float, default=0.005,
+                            help='Fixed restoration rate when restore is active.')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
     # --- TENT-Continual ---
     elif method == 'tent_continual':
         pass   # no extra args beyond base parser
+
+    # --- SAR (Sharpness-Aware Reliable TTA, ICLR 2023) ---
+    elif method == 'sar_continual':
+        parser.add_argument('--margin_e0_factor', type=float, default=0.4,
+                            help='SAR entropy filter margin = factor*log(C) (default 0.4)')
+        parser.add_argument('--reset_constant_em', type=float, default=0.2,
+                            help='SAR EMA threshold for model recovery (default 0.2)')
+        parser.add_argument('--sar_rho', type=float, default=0.05,
+                            help='SAM neighborhood radius (default 0.05)')
+        parser.add_argument('--top_block_exclude', type=int, default=6,
+                            help='Number of trailing ViT blocks excluded from '
+                                 'adaptation (default 6, i.e. blocks 18-23 on ViT-L/14)')
+
+    # --- DeYO (Entropy is not Enough, ICLR 2024 spotlight) ---
+    elif method == 'deyo_continual':
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5,
+                            help='DeYO entropy filter = factor*log(C) (default 0.5)')
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4,
+                            help='Reweighting margin = factor*log(C) (default 0.4)')
+        parser.add_argument('--plpd_threshold', type=float, default=0.2,
+                            help='PLPD filter threshold (default 0.2, wild setting)')
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'],
+                            help='Object-destructive transform (default patch shuffle)')
+        parser.add_argument('--patch_len', type=int, default=4,
+                            help='patch_len x patch_len grid for patch shuffle (default 4)')
+        parser.add_argument('--reweight_ent', type=int, default=1,
+                            help='Entropy reweighting on/off (default 1)')
+        parser.add_argument('--reweight_plpd', type=int, default=1,
+                            help='PLPD reweighting on/off (default 1)')
+        parser.add_argument('--top_block_exclude', type=int, default=6,
+                            help='Number of trailing ViT blocks excluded (default 6)')
+
+    # --- DeYO + multi-layer adapt + UAML eval (single-prompt / full-MLMP) ---
+    elif method in ('deyo_uaml_continual', 'deyo_mlmp_continual'):
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+
+    # --- DeYO + MLMP + DivGate ---
+    elif method == 'deyo_mlmp_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--h_threshold', type=float, default=2.0)
+        parser.add_argument('--h_warning', type=float, default=1.7)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    # --- DeYO + MLMP + SmoothAnchor ---
+    elif method == 'deyo_mlmp_smooth_anchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--h_ceil', type=float, default=2.9)
+        parser.add_argument('--h_floor', type=float, default=2.2)
+        parser.add_argument('--lag_scale', type=float, default=150.0)
+        parser.add_argument('--max_lag', type=int, default=3000)
+        parser.add_argument('--rst', type=float, default=0.005)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
+    elif method == 'dat_continual':
+        parser.add_argument('--k_percent', type=float, default=0.001,
+                            help='Fraction of visual layers selected per backward (default 0.001)')
+        parser.add_argument('--select_until', type=int, default=100,
+                            help='PAU: accumulate selected layers for first N batches (default 100)')
+        parser.add_argument('--trp_thr', type=float, default=0.85,
+                            help='Low-uncertainty cutoff -> TRP pixels (default 0.85)')
+        parser.add_argument('--dsp_thr', type=float, default=0.99,
+                            help='High-uncertainty cutoff -> DSP pixels (default 0.99)')
+        parser.add_argument('--conf_thr', type=float, default=0.69,
+                            help='Anchor-confidence cutoff for pseudo-label (default 0.69)')
+        parser.add_argument('--aug_n', type=int, default=8,
+                            help='Multi-aug forwards for uncertainty (default 8)')
+        parser.add_argument('--mt', type=float, default=0.999,
+                            help='EMA teacher rate (default 0.999)')
+
+    # --- EATA (Efficient Anti-forgetting TTA, ICML 2022) ---
+    elif method == 'eata_continual':
+        parser.add_argument('--e_margin_factor', type=float, default=0.4,
+                            help='Reliable-entropy threshold = factor*log(C) (default 0.4)')
+        parser.add_argument('--d_margin', type=float, default=0.05,
+                            help='Cosine redundancy threshold (default 0.05)')
+        parser.add_argument('--fisher_alpha', type=float, default=2000.0,
+                            help='EWC trade-off for Fisher regularizer (default 2000)')
+        parser.add_argument('--fisher_size', type=int, default=200,
+                            help='Source patches for Fisher estimate (default 200)')
+
+    # --- RoTTA (Robust TTA in Dynamic Scenarios, CVPR 2023) ---
+    elif method == 'rotta_continual':
+        parser.add_argument('--memory_size', type=int, default=64,
+                            help='CSTU memory bank capacity (default 64)')
+        parser.add_argument('--nu', type=float, default=0.001,
+                            help='EMA teacher update rate (default 0.001)')
+        parser.add_argument('--lambda_t', type=float, default=1.0,
+                            help='Timeliness weight in CSTU score (default 1.0)')
+        parser.add_argument('--lambda_u', type=float, default=1.0,
+                            help='Uncertainty weight in CSTU score (default 1.0)')
+        parser.add_argument('--update_frequency', type=int, default=None,
+                            help='Update every N instances (default = memory_size)')
 
     # --- CMA-Continual (Cross-Modal Alignment, proposed) ---
     elif method == 'cma_continual':
@@ -260,6 +537,151 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--brake_rst', type=float, default=0.05,
                             help='Stochastic restore probability in brake mode')
 
+    elif method == 'tent_divgate_recent_anchor':
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+        parser.add_argument('--anchor_lag', type=int, default=300,
+                            help='Restoration target = LN snapshot from N batches ago')
+
+    elif method == 'tent_divgate_decoupled':
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--marginal_buf_size', type=int, default=50,
+                            help='Rolling window size for H_margin averaging')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between mode re-evaluations')
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'tent_divgate_hybrid_anchor':
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+        parser.add_argument('--anchor_lag', type=int, default=300,
+                            help='Cautious restore target = LN snapshot from N batches ago; '
+                                 'brake restore always targets the frozen source.')
+
+    elif method == 'tent_divgate_smooth_anchor':
+        parser.add_argument('--h_ceil', type=float, default=1.8,
+                            help='H_margin >= h_ceil -> no restore.')
+        parser.add_argument('--h_floor', type=float, default=1.5,
+                            help='H_margin <= h_floor -> restore toward frozen source.')
+        parser.add_argument('--lag_scale', type=float, default=90.0,
+                            help='lag(H) = lag_scale / (H - h_floor). '
+                                 'Default 90 gives lag=300 at H=1.8.')
+        parser.add_argument('--max_lag', type=int, default=3000,
+                            help='Cap on lag; lag > max_lag falls back to source snapshot.')
+        parser.add_argument('--rst', type=float, default=0.005,
+                            help='Fixed restoration rate when restore is active.')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    elif method == 'tent_contgate_continual':
+        parser.add_argument('--h_high', type=float, default=1.8,
+                            help='H_margin >= this -> rst = 0 (healthy, no brake)')
+        parser.add_argument('--h_low', type=float, default=0.8,
+                            help='H_margin <= this -> rst = max_rst (full brake)')
+        parser.add_argument('--max_rst', type=float, default=0.01,
+                            help='Upper bound on stochastic restore probability')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+
+    elif method == 'tent_divgate_continual_catseg':
+        parser.add_argument('--h_threshold', type=float, default=1.8,
+                            help='H_margin >= this -> aggressive (rst=0)')
+        parser.add_argument('--h_warning', type=float, default=1.5,
+                            help='h_warning <= H < h_threshold -> cautious; '
+                                 '< h_warning -> brake')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations')
+        parser.add_argument('--cautious_rst', type=float, default=0.005,
+                            help='Restore probability in cautious mode')
+        parser.add_argument('--brake_rst', type=float, default=0.02,
+                            help='Restore probability in brake mode')
+
+    elif method == 'tent_siggate_continual':
+        parser.add_argument('--h_high', type=float, default=1.8,
+                            help='Upper anchor: rst saturates near 0 here')
+        parser.add_argument('--h_low', type=float, default=0.8,
+                            help='Lower anchor: rst saturates near max_rst here')
+        parser.add_argument('--max_rst', type=float, default=0.01,
+                            help='Upper bound on stochastic restore probability')
+        parser.add_argument('--sigmoid_k', type=float, default=-1.0,
+                            help='Sigmoid steepness; <=0 -> auto = 6/(h_high-h_low)')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+        parser.add_argument('--gate_log_path', type=str, default=None,
+                            help='Optional path to per-batch gate log csv (h_margin, rst)')
+
+    elif method == 'clipartt_continual':
+        parser.add_argument('--clipartt_k', type=int, default=3,
+                            help='Top-K classes per pixel for CLIPArTT prompt construction')
+
+    elif method == 'clipartt_siggate_continual':
+        parser.add_argument('--clipartt_k', type=int, default=3,
+                            help='Top-K classes per pixel for CLIPArTT prompt construction')
+
+    elif method == 'clipartt_divgate_continual':
+        parser.add_argument('--clipartt_k', type=int, default=3,
+                            help='Top-K classes per pixel for CLIPArTT prompt construction')
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+        parser.add_argument('--gate_log_path', type=str, default=None,
+                            help='Optional path to per-batch gate log csv (h_margin, mode, rst)')
+
+    elif method == 'tent_topk_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Fraction of highest-confidence pixels to keep in TENT loss')
+
+    elif method == 'tent_minprompt_continual':
+        pass  # only takes prompt_dir / steps / lr (already global)
+
+    elif method == 'tent_topk_divgate_continual':
+        parser.add_argument('--top_k_percent', type=float, default=0.2,
+                            help='Fraction of highest-confidence pixels to keep in TENT loss')
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'tent_minprompt_divgate_continual':
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+
+    elif method == 'tent_early_continual':
+        parser.add_argument('--early_cutoff', type=int, default=8,
+                            help='Block index < this -> trainable; '
+                                 'all other LN params (incl. ln_post) FROZEN')
+
+    elif method == 'tent_divgate_layered_continual':
+        parser.add_argument('--h_threshold', type=float, default=1.8,
+                            help='H_margin >= this -> aggressive mode (rst=0)')
+        parser.add_argument('--h_warning', type=float, default=1.2,
+                            help='h_warning <= H_margin < h_threshold -> cautious; '
+                                 '< h_warning -> brake')
+        parser.add_argument('--monitor_interval', type=int, default=50,
+                            help='Batches between H_margin re-evaluations (default 50)')
+        parser.add_argument('--cautious_rst', type=float, default=0.005,
+                            help='Stochastic restore probability in cautious mode')
+        parser.add_argument('--brake_rst', type=float, default=0.05,
+                            help='Stochastic restore probability in brake mode')
+        parser.add_argument('--early_cutoff', type=int, default=8,
+                            help='Block index < this -> "early" group (trainable)')
+        parser.add_argument('--late_cutoff', type=int, default=16,
+                            help='Block index >= this -> "late" group (FROZEN, '
+                                 'no gradients, no restoration)')
+
     # --- DPCore (Dynamic Prompt Coreset) ---
     elif method == 'dpcore':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
@@ -272,6 +694,37 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--prompt_num', type=int, default=8,
                             help='Number of visual prompt tokens')
         parser.add_argument('--verbose_dpcore', action='store_true',
+                            help='Print per-step loss and coreset eval info')
+
+    # --- KFF (Class-aware domain knowledge Fusion & Fission, NeurIPS 2025) ---
+    elif method == 'kff':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        # Domain-prompt params (mirror KFF OURS.*/OPTIM.*):
+        parser.add_argument('--tau', type=float, default=3.0,
+                            help='Temperature for domain-prompt softmax weighting')
+        parser.add_argument('--ema_alpha', type=float, default=0.1,
+                            help='EMA momentum for domain-prompt key update (KFF: 0.1)')
+        parser.add_argument('--thr_d', type=float, default=25.0,
+                            help='L2 threshold for domain-prompt ID/OOD decision')
+        parser.add_argument('--n_d', type=int, default=20,
+                            help='Max domain-prompt base capacity')
+        parser.add_argument('--lr_domain', type=float, default=1e-5,
+                            help='LR for domain-prompt optimiser')
+        parser.add_argument('--lamda', type=float, default=1.0,
+                            help='Weight on mean term in distribution loss')
+        # Class-prompt params:
+        parser.add_argument('--n_c', type=int, default=100,
+                            help='Max class-prompt base capacity')
+        parser.add_argument('--thr_c', type=float, default=0.005,
+                            help='Cosine threshold for class-prompt match')
+        parser.add_argument('--thr_ent', type=float, default=2.0,
+                            help='Entropy threshold gating class-prompt update')
+        parser.add_argument('--alpha_c', type=float, default=0.1,
+                            help='EMA momentum for class-prompt key update')
+        # Shared:
+        parser.add_argument('--prompt_num', type=int, default=8,
+                            help='Number of domain visual prompt tokens')
+        parser.add_argument('--verbose_kff', action='store_true',
                             help='Print per-step loss and coreset eval info')
 
     return parser
@@ -327,7 +780,8 @@ def main(args):
         args.patch_size, args.patch_stride,
         corruption=conditions[0],
         batch_size=args.batch_size, num_workers=args.workers,
-        shuffle=False
+        shuffle=False,
+        split=args.split,
     )
 
     if args.class_extensions and first_loader.dataset.class_extensions is not None:
@@ -351,12 +805,12 @@ def main(args):
     # Using fog-as-source causes loss_raw≈0 when testing on fog, making the ID
     # condition (loss_new < loss_raw * thr_rho) impossible → every batch is OOD.
     # Solution: use a clean source domain (CityscapesDataset) for ACDC experiments.
-    if args.method == 'dpcore':
+    if args.method in ('dpcore', 'kff'):
         src_dataset  = args.src_dataset  or args.dataset
         src_data_dir = args.src_data_dir or args.data_dir
         src_corruption = 'original'
 
-        print(f"\n[DPCore] Computing source statistics from '{src_dataset}' ({src_data_dir}) ...")
+        print(f"\n[{args.method}] Computing source statistics from '{src_dataset}' ({src_data_dir}) ...")
         src_loader, _ = segmentation_datasets.prepare_data(
             src_dataset, src_data_dir, args.init_resize,
             args.patch_size, args.patch_stride,
@@ -389,13 +843,55 @@ def main(args):
         adapt_method.obtain_src_prototypes(src_loader)
         del src_loader
 
+    # EATA needs a pre-stream Fisher-information pass on a source proxy to
+    # build the anti-forgetting (EWC) regularizer. ACDC has no clean source,
+    # so the first condition is the proxy (same convention as CMA-Proto).
+    if args.method == 'eata_continual':
+        src_dataset    = args.src_dataset    or args.dataset
+        src_data_dir   = args.src_data_dir   or args.data_dir
+        src_corruption = args.src_corruption or conditions[0]
+
+        print(f"\n[EATA] Loading source proxy for Fisher: "
+              f"dataset='{src_dataset}', corruption='{src_corruption}'")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False
+        )
+        adapt_method.compute_fishers(src_loader)
+        del src_loader
+
     all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}
     headers = "mIoU, mDice, mAcc"
+
+    # ----------------------------------------------------------------
+    # Universal entropy log: written for EVERY method, every batch.
+    # Captures both per-pixel and marginal-class entropy so any method's
+    # entropy dynamics can be analyzed post-hoc without re-running.
+    # Columns:
+    #   total_batch : monotonic batch counter across the whole stream
+    #   round       : 1..continual_rounds
+    #   condition   : current corruption / condition name
+    #   batch_idx   : index within (round, condition)
+    #   h_margin    : entropy of the batch's marginal class distribution
+    #                 (i.e. -sum(p log p) where p = mean softmax over B,H,W)
+    #   h_pixel_mean: mean per-pixel softmax entropy (TENT-style signal)
+    #   max_logit   : mean of max softmax probability (per pixel) — confidence
+    # ----------------------------------------------------------------
+    os.makedirs(args.save_dir, exist_ok=True)
+    entropy_log_path = os.path.join(args.save_dir, "entropy_log.csv")
+    with open(entropy_log_path, 'w') as f:
+        f.write("total_batch,round,condition,batch_idx,"
+                "h_margin,h_pixel_mean,max_logit\n")
+    _entropy_total_batches = 0  # monotonic across the whole stream
 
     print(f"\n{'='*65}")
     print(f"  Starting CTTA: {args.continual_rounds} rounds × {len(conditions)} conditions")
     print(f"  Conditions: {conditions}")
     print(f"  Adapt: {args.adapt}  |  Method: {args.method}  |  LR: {args.lr}")
+    print(f"  Entropy log: {entropy_log_path}")
     print(f"{'='*65}")
 
     for round_idx in range(args.continual_rounds):
@@ -406,18 +902,33 @@ def main(args):
         print(f"  Round {round_num:2d} / {args.continual_rounds}")
         print(f"{'─'*65}")
 
-        for condition in conditions:
+        for cond_idx, condition in enumerate(conditions):
             # ----------------------------------------------------------
             # Load data for this condition.
             # shuffle=False guarantees a deterministic stream order,
             # which is required for a fair CTTA evaluation.
             # ----------------------------------------------------------
+            # ACDC overlay corruption: pick the i-th overlay corruption from
+            # --acdc_overlay_corruptions for the i-th condition (paired by index).
+            _overlay = None
+            if args.acdc_overlay_corruptions:
+                if len(args.acdc_overlay_corruptions) != len(conditions):
+                    raise ValueError(
+                        f"--acdc_overlay_corruptions length ({len(args.acdc_overlay_corruptions)}) "
+                        f"must match --corruptions_list length ({len(conditions)})")
+                _overlay = args.acdc_overlay_corruptions[cond_idx]
+
             data_loader, _ = segmentation_datasets.prepare_data(
                 args.dataset, args.data_dir, args.init_resize,
                 args.patch_size, args.patch_stride,
                 corruption=condition,
                 batch_size=args.batch_size, num_workers=args.workers,
-                shuffle=False
+                shuffle=False,
+                split=args.split,
+                subset_size=args.subset_size,
+                subset_seed=args.subset_seed,
+                corruption_severity=args.corruption_severity,
+                acdc_overlay_corruption=_overlay,
             )
 
             results = []
@@ -442,6 +953,31 @@ def main(args):
                 # Evaluate BEFORE adapt (pre-update prediction), matching main.py protocol
                 with torch.no_grad():
                     patch_preds = adapt_method.evaluate(inputs)
+
+                # ----- Universal entropy logging -----
+                # patch_preds is per-pixel logits; shape (B*Npatch, C, H, W).
+                # Compute marginal-class entropy (DivGate signal),
+                # mean per-pixel entropy (TENT signal), and confidence.
+                with torch.no_grad():
+                    _probs = patch_preds.softmax(dim=1)              # (N, C, H, W)
+                    # Marginal class distribution (over batch and spatial dims)
+                    _marginal = _probs.mean(dim=(0, 2, 3))            # (C,)
+                    _marginal = _marginal / _marginal.sum().clamp(min=1e-8)
+                    _h_margin = float(-(
+                        _marginal * _marginal.clamp(min=1e-12).log()
+                    ).sum().item())
+                    # Per-pixel softmax entropy averaged over (N, H, W)
+                    _h_pixel = float(-(
+                        _probs * _probs.clamp(min=1e-12).log()
+                    ).sum(dim=1).mean().item())
+                    # Mean of max softmax probability (confidence)
+                    _max_logit = float(_probs.max(dim=1).values.mean().item())
+                _entropy_total_batches += 1
+                with open(entropy_log_path, 'a') as _f:
+                    _f.write(f"{_entropy_total_batches},{round_num},{condition},"
+                             f"{batch_idx},{_h_margin:.6f},"
+                             f"{_h_pixel:.6f},{_max_logit:.6f}\n")
+                # ----- end entropy logging -----
 
                 if args.adapt:
                     adapt_method.continual_adapt(inputs)

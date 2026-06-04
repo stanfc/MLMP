@@ -12,7 +12,7 @@ GPU_ID=2
 
 # Dataset Configuration
 DATASET=ACDCDataset
-DATA_DIR="data/ACDC/"
+DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 WORKERS=4
@@ -29,13 +29,14 @@ STEPS=1
 
 # Diversity gate (proposal_after_cma.md §2.3 defaults)
 H_THRESHOLD=1.8       # H_margin >= this  -> aggressive (rst=0)
-H_WARNING=1.2         # h_warning <= H < h_threshold -> cautious
+H_WARNING=1.5         # h_warning <= H < h_threshold -> cautious
 MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
 CAUTIOUS_RST=0.005
-BRAKE_RST=0.05
+BRAKE_RST=0.02
+
 
 CONTINUAL_ROUNDS=150
-SAVE_DIR="save/${DATASET}/${METHOD}_step_${STEPS}/"
+SAVE_DIR="save/${DATASET}/${METHOD}_caut_0.005_brake_0.02/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -64,4 +65,9 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --brake_rst $BRAKE_RST \
                         \
                         --save_dir $SAVE_DIR \
-                        --class_extensions
+                        --class_extensions \
+&& python plot_results.py \
+        --runs $SAVE_DIR \
+              save/${DATASET}/tent_divgate_continual_step_1 \
+        --labels "caut_0.005_brake_0.02" "previous (caut_0.008_brake_0.01)" \
+        --out_dir figures/caut_0.005_brake_0.02

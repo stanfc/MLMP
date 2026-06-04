@@ -108,3 +108,9 @@ venv.bak/
 .qualitative/
 .save/
 *_log*.txt
+
+figures/
+results/
+.weights/
+.claude/
+__pycache__/

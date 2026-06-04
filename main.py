@@ -3,6 +3,11 @@ import os, time, argparse
 
 # Third-party
 import torch
+torch.multiprocessing.set_sharing_strategy('file_system')
+# Limit PyTorch intra/inter-op threads (mirrors main_continual.py).
+_n_intra = int(os.environ.get('OMP_NUM_THREADS', '4'))
+torch.set_num_threads(_n_intra)
+torch.set_num_interop_threads(min(2, _n_intra))
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -65,7 +70,8 @@ def argparser():
         default='COCOStuffDataset',
         choices=(
             'COCOStuffDataset', 'COCOObjectDataset', 'CityscapesDataset',
-            'ACDCDataset',
+            'ACDCDataset', 'ACDCMerged3Dataset', 'ACDCMerged6Dataset',
+            'ACDCMerged10Dataset',
             'PascalVOC20Dataset', 'PascalVOC21Dataset',
             'PascalContext59Dataset', 'PascalContext60Dataset'
         ),
@@ -77,6 +83,12 @@ def argparser():
         default=0,
         help='Number of data-loading workers'
     )
+    parser.add_argument(
+        '--subset_size', type=int, default=None,
+        help='Optional: randomly subsample N images per corruption (deterministic).'
+    )
+    parser.add_argument('--subset_seed', type=int, default=0,
+                        help='Seed for --subset_size sampling')
     parser.add_argument(
         '--init_resize',
         nargs='+',
@@ -128,6 +140,13 @@ def argparser():
         '--class_extensions',
         action='store_true',
         help='Enable dataset-specific class extensions if available'
+    )
+    parser.add_argument(
+        '--split', type=str, default='val',
+        help=(
+            'Dataset split (ACDC only). Default "val" preserves existing behaviour. '
+            'Use "train+val" to concatenate ACDC train and val splits per condition.'
+        )
     )
     
     # ----------------------------------------
@@ -346,6 +365,34 @@ def main_continual(args):
     all_results_path = os.path.join(args.save_dir, "results.txt")
     os.makedirs(os.path.dirname(all_results_path), exist_ok=True)
 
+    # ----------------------------------------------------------------
+    # Universal entropy log: written for EVERY method and every batch.
+    # See main_continual.py for column definitions. Same format here so
+    # episodic and continual logs can be analyzed by the same plot script.
+    # ----------------------------------------------------------------
+    entropy_log_path = os.path.join(args.save_dir, "entropy_log.csv")
+    with open(entropy_log_path, 'w') as f:
+        f.write("total_batch,trial,corruption,sample_idx,phase,"
+                "h_margin,h_pixel_mean,max_logit\n")
+    _entropy_counter = [0]   # list-as-cell for mutable closure (no nonlocal)
+
+    def _log_entropy(patch_preds, trial, corruption, sample_idx, phase):
+        """Compute per-batch entropy stats from logits and append to csv.
+
+        phase ∈ {'pre','post'} — pre-adapt vs post-adapt (episodic has both)."""
+        with torch.no_grad():
+            _probs = patch_preds.softmax(dim=1)
+            _marginal = _probs.mean(dim=(0, 2, 3))
+            _marginal = _marginal / _marginal.sum().clamp(min=1e-8)
+            _h_margin = float(-(_marginal * _marginal.clamp(min=1e-12).log()).sum().item())
+            _h_pixel = float(-(_probs * _probs.clamp(min=1e-12).log()).sum(dim=1).mean().item())
+            _max_logit = float(_probs.max(dim=1).values.mean().item())
+        _entropy_counter[0] += 1
+        with open(entropy_log_path, 'a') as _f:
+            _f.write(f"{_entropy_counter[0]},{trial},{corruption},"
+                     f"{sample_idx},{phase},{_h_margin:.6f},"
+                     f"{_h_pixel:.6f},{_max_logit:.6f}\n")
+
     all_results = dict()
     headers = "mIoU, mDice, mAcc"
 
@@ -359,7 +406,8 @@ def main_continual(args):
     _first_loader, org_classes = segmentation_datasets.prepare_data(
         args.dataset, args.data_dir, args.init_resize,
         args.patch_size, args.patch_stride, corruption=args.corruptions_list[0],
-        batch_size=args.batch_size, num_workers=args.workers)
+        batch_size=args.batch_size, num_workers=args.workers,
+        split=args.split)
     if args.class_extensions and _first_loader.dataset.class_extensions is not None:
         args.classes = _first_loader.dataset.class_extensions
     else:
@@ -384,7 +432,9 @@ def main_continual(args):
             data_loader, org_classes = segmentation_datasets.prepare_data(
                 args.dataset, args.data_dir, args.init_resize,
                 args.patch_size, args.patch_stride, corruption=corruption,
-                batch_size=args.batch_size, num_workers=args.workers)
+                batch_size=args.batch_size, num_workers=args.workers,
+                split=args.split,
+                subset_size=args.subset_size, subset_seed=args.subset_seed)
 
             if args.class_extensions and data_loader.dataset.class_extensions is not None:
                 ext_classes = data_loader.dataset.class_extensions
@@ -414,6 +464,7 @@ def main_continual(args):
                 # evaluate first (pre-update), then adapt — following DPCore protocol
                 with torch.no_grad():
                     patch_preds = adapt_method.evaluate(inputs)
+                _log_entropy(patch_preds, t, corruption, batch_idx, "pre")
                 if args.adapt:
                     adapt_method.continual_adapt(inputs)
                     if hasattr(adapt_method, 'coreset'):
@@ -519,8 +570,10 @@ def main(args):
     
     for c_idx, corruption in enumerate(args.corruptions_list):
         data_loader, org_classes = segmentation_datasets.prepare_data(args.dataset, args.data_dir, args.init_resize,
-                                                                  args.patch_size, args.patch_stride, corruption=corruption, 
-                                                                  batch_size=args.batch_size, num_workers=args.workers)
+                                                                  args.patch_size, args.patch_stride, corruption=corruption,
+                                                                  batch_size=args.batch_size, num_workers=args.workers,
+                                                                  split=args.split,
+                                                                  subset_size=args.subset_size, subset_seed=args.subset_seed)
         
         # Check if the extensions of classes should be used
         if args.class_extensions and data_loader.dataset.class_extensions is not None:
@@ -586,7 +639,7 @@ def main(args):
                     loss_iter_report = adapt_method.adapt(inputs)
                     loss_batch_report.append(loss_iter_report)
 
-                # perform evaluation 
+                # perform evaluation
                 with torch.no_grad():
                     patch_preds = adapt_method.evaluate(inputs)
 
