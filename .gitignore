@@ -108,3 +108,24 @@ venv.bak/
 .qualitative/
 .save/
 *_log*.txt
+
+# ── Experiment artifacts (figures, result tables, weights, logs) ──
+figures/
+results/
+results_summary.csv
+results_table.tex
+.weights/
+logs/
+save_tekai/
+
+# Claude Code local state / memory
+.claude/
+
+# Image artifacts in general, BUT keep the ImageNet-C frost textures
+# (utils/imagecorruptions/frost/*) — they are a runtime code dependency.
+*.png
+*.jpg
+*.jpeg
+!utils/imagecorruptions/frost/
+!utils/imagecorruptions/frost/*
+
