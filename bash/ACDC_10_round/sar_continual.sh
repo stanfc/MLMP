@@ -4,7 +4,7 @@
 # See docs/2026-05-17-sar-eata-v20-design.md for the full design.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=3
+GPU_ID=2
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=ACDCDataset
@@ -25,15 +25,17 @@ STEPS=1
 
 # ── SAR (paper defaults; e_margin = 0.4 * ln(num_classes)) ─────────
 # ACDC uses 19 Cityscapes classes → e_margin = 0.4 * ln(19) ≈ 1.178
-E_MARGIN=1.178        # sample-level mean-pixel entropy threshold
+E_MARGIN=1.8          # sample-level mean-pixel entropy threshold
 SAM_RHO=0.05          # SAM perturbation radius (paper default)
-E_0=0.2               # recovery threshold for loss EMA
+E_0=0.1               # recovery threshold: trigger reset when loss_ma < E_0
+                      # (SAR paper uses 0.2 for ImageNet/1000-class; scaled by
+                      #  ln(C) ratio: 0.2 * ln(19)/ln(1000) ≈ 0.085 → round to 0.1)
 EMA_FACTOR=0.9        # loss MA decay
 RECOVERY_WARMUP=50    # batches before recovery can fire
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

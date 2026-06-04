@@ -1,19 +1,10 @@
 #!/bin/bash
-# EATA-Continual on ACDC (CTTA, 150 rounds).
-# Pre-stream Fisher (clean source proxy) + reliable/non-redundant filter
-# + Fisher-weighted EWC loss (ICML 2022).
-# See docs/2026-05-17-sar-eata-v20-design.md for the full design.
-#
-# NOTE on Fisher source for ACDC:
-#   ACDC has no "clean" split. We use the first condition (fog) as a
-#   source proxy — same convention as cma_proto_continual / dpcore on ACDC.
-#   Pass --src_corruption fog explicitly; main_continual.py's dispatch
-#   for eata_continual falls back to corruption="original" by default,
-#   but ACDC's dataset config treats the condition as the corruption,
-#   so we override here via --src_corruption.
+# DELTA-Continual (DOT-only) on ACDC (CTTA, 150 rounds).
+# TENT entropy minimization + class-aware Dynamic Online re-weighting (ICLR 2023).
+# TBR is omitted (NA-CLIP uses LayerNorm, no BN). See adapt/delta_continual.py.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=3
+GPU_ID=2
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=ACDCDataset
@@ -23,25 +14,24 @@ CONDITIONS="fog night rain snow"
 WORKERS=4
 
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="eata_continual"
+METHOD="delta_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# ── Training hyperparameters ───────────────────────────────────────
+# ── Training hyperparameters (match tent_divgate_continual.sh on ACDC) ─
 BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# ── EATA (paper defaults; e_margin = 0.4 * ln(num_classes)) ────────
-# ACDC uses 19 Cityscapes classes → e_margin = 0.4 * ln(19) ≈ 1.178
-E_MARGIN=1.178        # sample-level mean-pixel entropy threshold
-D_MARGIN=0.2         # cosine-similarity gap for non-redundant filter
-FISHER_ALPHA=2000     # EWC weight
-FISHER_SIZE=2000      # source samples for Fisher (fog has ~2000 ACDC val images)
+# ── DOT hyperparameters (paper-style defaults) ─────────────────────
+# dot_momentum = EMA decay for the class-frequency tracker.
+# dot_alpha    = exponent on inverse frequency; 0=plain TENT, 1=full inverse-freq.
+DOT_MOMENTUM=0.9
+DOT_ALPHA=1.0
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_dmargin_${D_MARGIN}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_alpha_${DOT_ALPHA}_mom_${DOT_MOMENTUM}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
@@ -64,11 +54,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
                         \
-                        --e_margin $E_MARGIN \
-                        --d_margin $D_MARGIN \
-                        --fisher_alpha $FISHER_ALPHA \
-                        --fisher_size $FISHER_SIZE \
-                        --src_corruption fog \
+                        --dot_momentum $DOT_MOMENTUM \
+                        --dot_alpha $DOT_ALPHA \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

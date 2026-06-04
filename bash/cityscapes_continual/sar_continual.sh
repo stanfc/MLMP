@@ -1,47 +1,67 @@
 #!/bin/bash
-# EATA-Continual on ACDC (CTTA, 150 rounds).
-# Pre-stream Fisher (clean source proxy) + reliable/non-redundant filter
-# + Fisher-weighted EWC loss (ICML 2022).
+# SAR-Continual on CityscapesDataset (CTTA, N rounds).
+# SAM optimizer + reliable sample filtering + model recovery (ICLR 2023).
+# 15 ImageNet-C corruptions applied on-the-fly.
 # See docs/2026-05-17-sar-eata-v20-design.md for the full design.
-#
-# NOTE on Fisher source for ACDC:
-#   ACDC has no "clean" split. We use the first condition (fog) as a
-#   source proxy — same convention as cma_proto_continual / dpcore on ACDC.
-#   Pass --src_corruption fog explicitly; main_continual.py's dispatch
-#   for eata_continual falls back to corruption="original" by default,
-#   but ACDC's dataset config treats the condition as the corruption,
-#   so we override here via --src_corruption.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=3
+GPU_ID=2
 
 # ── Dataset ────────────────────────────────────────────────────────
-DATASET=ACDCDataset
-DATA_DIR="data/ACDC/"
+DATASET=CityscapesDataset
+DATA_DIR="data/Cityscape/"
 INIT_RESIZE="1120 560"
-CONDITIONS="fog night rain snow"
 WORKERS=4
 
+# ── Corruption conditions (ImageNet-C standard order) ──────────────
+# Comment out individual lines to run a subset.
+CORRUPTIONS_ARRAY=(
+    # --- noise ---
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
+    # --- blur ---
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
+    # --- weather ---
+    snow
+    frost
+    fog
+    brightness
+    contrast
+    # --- digital ---
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
+)
+# One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
+CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
+
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="eata_continual"
+METHOD="sar_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
-# ── Training hyperparameters ───────────────────────────────────────
+# ── Training hyperparameters (match tent_divgate_continual on Cityscapes) ─
 BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# ── EATA (paper defaults; e_margin = 0.4 * ln(num_classes)) ────────
-# ACDC uses 19 Cityscapes classes → e_margin = 0.4 * ln(19) ≈ 1.178
-E_MARGIN=1.178        # sample-level mean-pixel entropy threshold
-D_MARGIN=0.2         # cosine-similarity gap for non-redundant filter
-FISHER_ALPHA=2000     # EWC weight
-FISHER_SIZE=2000      # source samples for Fisher (fog has ~2000 ACDC val images)
+# ── SAR (paper defaults; e_margin = 0.4 * ln(num_classes)) ─────────
+# Cityscapes uses 19 classes → e_margin = 0.4 * ln(19) ≈ 1.178
+E_MARGIN=1.8          # sample-level mean-pixel entropy threshold
+SAM_RHO=0.05          # SAM perturbation radius (paper default)
+E_0=0.1               # recovery threshold: trigger reset when loss_ma < E_0
+                      # (SAR paper uses 0.2 for ImageNet/1000-class; scaled by
+                      #  ln(C) ratio: 0.2 * ln(19)/ln(1000) ≈ 0.085 → round to 0.1)
+EMA_FACTOR=0.9        # loss MA decay
+RECOVERY_WARMUP=50    # batches before recovery can fire
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_dmargin_${D_MARGIN}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
@@ -55,7 +75,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --init_resize $INIT_RESIZE \
                         --patch_size 224 224 \
                         --patch_stride 112 \
-                        --corruptions_list $CONDITIONS \
+                        --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
                         \
                         --lr $LR \
@@ -65,10 +85,10 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --seed 0 \
                         \
                         --e_margin $E_MARGIN \
-                        --d_margin $D_MARGIN \
-                        --fisher_alpha $FISHER_ALPHA \
-                        --fisher_size $FISHER_SIZE \
-                        --src_corruption fog \
+                        --sam_rho $SAM_RHO \
+                        --e_0 $E_0 \
+                        --ema_factor $EMA_FACTOR \
+                        --recovery_warmup $RECOVERY_WARMUP \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

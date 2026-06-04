@@ -6,7 +6,7 @@
 # INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=2
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
@@ -17,14 +17,14 @@ WORKERS=1
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -32,9 +32,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
@@ -49,15 +49,17 @@ LR=0.00001
 STEPS=1
 
 # ── SAR (paper defaults; e_margin = 0.4 * ln(num_classes)) ─────────
-E_MARGIN=1.198        # 0.4 * ln(20) for VOC20
+E_MARGIN=1.8          # 0.4 * ln(20) for VOC20
 SAM_RHO=0.05          # SAM perturbation radius
-E_0=0.2               # recovery threshold for loss EMA
+E_0=0.1               # recovery threshold: trigger reset when loss_ma < E_0
+                      # (SAR paper uses 0.2 for ImageNet/1000-class; scaled by
+                      #  ln(C) ratio: 0.2 * ln(20)/ln(1000) ≈ 0.087 → round to 0.1)
 EMA_FACTOR=0.9        # loss MA decay
 RECOVERY_WARMUP=50    # batches before recovery can fire
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

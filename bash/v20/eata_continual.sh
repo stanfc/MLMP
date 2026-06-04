@@ -6,7 +6,7 @@
 # INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=3
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset
@@ -17,14 +17,14 @@ WORKERS=1
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 CORRUPTIONS_ARRAY=(
     # --- noise ---
-    gaussian_noise
-    shot_noise
-    impulse_noise
+    # gaussian_noise
+    # shot_noise
+    # impulse_noise
     # --- blur ---
-    defocus_blur
-    glass_blur
-    motion_blur
-    zoom_blur
+    # defocus_blur
+    # glass_blur
+    # motion_blur
+    # zoom_blur
     # --- weather ---
     snow
     frost
@@ -32,9 +32,9 @@ CORRUPTIONS_ARRAY=(
     brightness
     contrast
     # --- digital ---
-    elastic_transform
-    pixelate
-    jpeg_compression
+    # elastic_transform
+    # pixelate
+    # jpeg_compression
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
@@ -50,13 +50,13 @@ STEPS=1
 
 # ── EATA (paper defaults; e_margin = 0.4 * ln(num_classes)) ────────
 E_MARGIN=1.198        # 0.4 * ln(20) for VOC20
-D_MARGIN=0.05         # cosine-similarity gap for non-redundant filter
+D_MARGIN=0.2         # cosine-similarity gap for non-redundant filter
 FISHER_ALPHA=2000     # EWC weight
 FISHER_SIZE=2000      # source samples for Fisher estimation (VOC20 val has ~1449)
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather_dmargin_${D_MARGIN}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \

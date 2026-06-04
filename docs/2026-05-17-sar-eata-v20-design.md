@@ -58,8 +58,8 @@ Three independent components composed at each adaptation step:
 
 **C. Model recovery**
 - Maintain exponential moving average of the loss: `loss_ma ← ema_factor * loss_ma + (1 - ema_factor) * current_loss`.
-- If `loss_ma > e_0` after at least `recovery_warmup` batches, **reset all visual-encoder LN parameters to source snapshot** and clear `loss_ma`.
-- Default `e_0 = 0.2`, `ema_factor = 0.9`, `recovery_warmup = 50`.
+- If `loss_ma < e_0` after at least `recovery_warmup` batches, **reset all visual-encoder LN parameters to source snapshot** and clear `loss_ma`. Low EMA = entropy minimisation has driven the model to over-confident trivial predictions (SAR paper's collapse signal; matches `ema < 0.2` reset condition in the official `mr-eggplant/SAR` reference implementation).
+- Default `e_0 = 0.1` for our 19/20-class setting (paper uses 0.2 for ImageNet's 1000 classes; scaled roughly by `ln(C)`). `ema_factor = 0.9`, `recovery_warmup = 50`.
 
 ### Loss
 - Pure TENT loss (pixel-wise softmax entropy, no top-K filtering, single prompt template — mirrors `tent_divgate_continual`).

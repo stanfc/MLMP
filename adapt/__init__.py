@@ -19,7 +19,9 @@ from .cma_divgate_continual import CMADivGateContinual
 from .tent_divgate_continual import TENTDivGateContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_continual import SARContinual
+from .sar_divgate_continual import SARDivGateContinual
 from .eata_continual import EATAContinual
+from .delta_continual import DELTAContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -48,8 +50,12 @@ METHOD_CLASSES = {
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAM + reliable filter + model recovery (SAR, ICLR 2023)
     'sar_continual': SARContinual,
+    # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)
+    'sar_divgate_continual': SARDivGateContinual,
     # Continual TTA with reliable+non-redundant filter + Fisher-weighted EWC (EATA, ICML 2022)
     'eata_continual': EATAContinual,
+    # Continual TTA with TENT + class-aware Dynamic Online re-weighting (DELTA DOT, ICLR 2023)
+    'delta_continual': DELTAContinual,
 }
 
 

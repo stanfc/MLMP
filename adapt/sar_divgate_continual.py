@@ -1,18 +1,24 @@
 """
-SAR-Continual: Sharpness-Aware Reliable test-time adaptation for OVSS, no reset.
+SAR-DivGate-Continual: SAM-optimized reliable entropy + diversity-gated
+stochastic restoration (CTTA, no reset).
 
-Three independent mechanisms over TENT base loss:
-  1. Reliable sample filtering: skip samples with mean pixel entropy > e_margin.
-  2. SAM optimizer step: perturb LN weights by rho*grad/||grad||, then take
-     gradient at perturbed point as the real update direction. Flatter minima
-     generalize better when the source-vs-target adaptation gap is small.
-  3. Model recovery: if EMA of the (filtered) loss drops below e_0 after
-     warmup, reset all visual LN params to the source snapshot and clear
-     the EMA. Low loss EMA is the SAR paper's collapse signal -- entropy
-     minimisation has driven the model to over-confident trivial predictions.
+Hybrid of adapt/sar_continual.py and adapt/tent_divgate_continual.py:
+  Kept from SAR
+    - Reliability filter (skip sample if mean entropy > e_margin)
+    - Pixel-level filter (loss only on entropy < e_margin pixels)
+    - SAM optimizer (two-step ascent-descent for flat minima)
+  Dropped from SAR
+    - loss_ma EMA tracking
+    - Hard model recovery (loss_ma triggered full reset)
+  Added from TENT-DivGate
+    - Marginal class entropy H_margin monitoring (buffer over monitor_interval batches)
+    - Three-tier stochastic restoration (aggressive/cautious/brake)
 
-Reference: Niu et al., "Towards Stable Test-Time Adaptation in Dynamic Wild
-World", ICLR 2023. See docs/2026-05-17-sar-eata-v20-design.md.
+The marginal buffer is updated on every batch -- even when the reliability
+filter skips adaptation -- so the gate has uninterrupted signal. Restoration
+fires only on batches where SAM actually took a second_step.
+
+See docs/sar_divgate_continual_spec.md for the full design.
 """
 
 import os
@@ -29,12 +35,20 @@ from .sam import SAM
 
 REFERENCE_PROMPT = 'a photo of a {}'
 
+MODE_AGGRESSIVE = 'aggressive'
+MODE_CAUTIOUS = 'cautious'
+MODE_BRAKE = 'brake'
 
-class SARContinual:
+
+class SARDivGateContinual:
 
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
-                 e_margin=1.198, sam_rho=0.05,
-                 e_0=0.2, ema_factor=0.9, recovery_warmup=50,
+                 # SAR-side
+                 e_margin=1.8, sam_rho=0.05,
+                 # DivGate-side
+                 h_threshold=1.6, h_warning=1.4,
+                 monitor_interval=50,
+                 cautious_rst=0.01, brake_rst=0.05,
                  prompt_dir=None,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
@@ -43,13 +57,25 @@ class SARContinual:
         self.lr = lr
         self.steps = steps
 
+        # SAR knobs
         self.e_margin = float(e_margin)
         self.sam_rho = float(sam_rho)
-        self.e_0 = float(e_0)
-        self.ema_factor = float(ema_factor)
-        self.recovery_warmup = int(recovery_warmup)
-        if not (0.0 <= self.ema_factor < 1.0):
-            raise ValueError(f"ema_factor must be in [0, 1), got {self.ema_factor}")
+
+        # DivGate knobs
+        self.h_threshold = float(h_threshold)
+        self.h_warning = float(h_warning)
+        if self.h_warning > self.h_threshold:
+            raise ValueError(
+                f"h_warning ({self.h_warning}) must be <= h_threshold ({self.h_threshold})"
+            )
+        self.monitor_interval = int(monitor_interval)
+        if self.monitor_interval < 1:
+            raise ValueError(f"monitor_interval must be >= 1, got {self.monitor_interval}")
+        self.cautious_rst = float(cautious_rst)
+        self.brake_rst = float(brake_rst)
+        for n, v in [('cautious_rst', self.cautious_rst), ('brake_rst', self.brake_rst)]:
+            if not (0.0 <= v <= 1.0):
+                raise ValueError(f"{n} must be in [0, 1], got {v}")
 
         self.runtime = runtime_calculation
         self.device = device
@@ -76,9 +102,11 @@ class SARContinual:
         self.named_ln_params = list(zip(names, params))
 
         print_clip_parameters(self.model)
-        print(f"+++ SAR: e_margin={self.e_margin:.3f}, sam_rho={self.sam_rho}, "
-              f"e_0={self.e_0}, ema_factor={self.ema_factor}, "
-              f"recovery_warmup={self.recovery_warmup}")
+        print(f"+++ SAR-DivGate: e_margin={self.e_margin:.3f}, sam_rho={self.sam_rho}, "
+              f"thresholds=(warn {self.h_warning}, agg {self.h_threshold}), "
+              f"monitor_interval={self.monitor_interval}, "
+              f"rsts=(cautious {self.cautious_rst}, brake {self.brake_rst})")
+        print(f"+++ Initial mode: {MODE_AGGRESSIVE} (rst=0); buffer fills before first re-evaluation")
 
         # ---------- SAM-wrapped Adam (LN params only) ----------
         self.optimizer = SAM(
@@ -87,7 +115,7 @@ class SARContinual:
         )
         print_optimizer_parameters(self.optimizer, self.model)
 
-        # ---------- Source state snapshot ----------
+        # ---------- Source state snapshot (for stochastic restore) ----------
         self.model_state, self.optimizer_state = self.copy_model_and_optimizer(
             self.model, self.optimizer
         )
@@ -98,22 +126,28 @@ class SARContinual:
                 self.classes, self.prompt_templates, average=False
             ).squeeze()
 
-        # ---------- SAR runtime state ----------
-        self.loss_ma = None        # EMA of filtered loss
+        # ---------- Gate state ----------
+        self.marginal_buf = []
+        self.batch_count = 0
         self.total_batches = 0
+        self.current_mode = MODE_AGGRESSIVE
+        self.current_rst = 0.0
 
-        # ---------- Optional per-batch log ----------
+        # ---------- Optional per-monitor file log ----------
+        # If save_dir is provided (auto-injected by main_continual.py via
+        # inspect-based dispatch), write H_margin trajectory to
+        # {save_dir}/divgate_log.txt -- one row per _update_mode() call.
         self.log_path = None
         if save_dir is not None:
             try:
                 os.makedirs(save_dir, exist_ok=True)
-                self.log_path = os.path.join(save_dir, 'sar_log.txt')
+                self.log_path = os.path.join(save_dir, 'divgate_log.txt')
                 with open(self.log_path, 'w') as f:
-                    f.write("# SAR log: per-batch entropy/filter/recovery\n")
-                    f.write("total_batches,mean_entropy,was_filtered,loss_ma,was_reset\n")
-                print(f"+++ SAR log -> {self.log_path}")
+                    f.write("# DivGate-S log: per-monitor H_margin and mode\n")
+                    f.write("total_batches,h_margin,mode\n")
+                print(f"+++ DivGate-S log -> {self.log_path}")
             except OSError as e:
-                print(f"+++ SAR log disabled ({save_dir}): {e}")
+                print(f"+++ DivGate-S log disabled (could not open {save_dir}): {e}")
                 self.log_path = None
 
         if self.runtime:
@@ -143,7 +177,6 @@ class SARContinual:
         self.load_model_and_optimizer(
             self.model, self.optimizer, self.model_state, self.optimizer_state
         )
-        self.loss_ma = None
 
     # ===========================================================
     # Adaptation
@@ -153,28 +186,29 @@ class SARContinual:
         t1 = time.time()
         loss_report = []
 
-        was_filtered = False
-        was_reset = False
-        ent_mean_for_log = float('nan')
-
         for _ in range(self.steps):
-            # First forward to evaluate reliability of this sample
+            # ----- First forward (used both for reliability check and for the
+            #       DivGate marginal signal). H_margin signal must reflect the
+            #       actual model state at batch entry, NOT the perturbed state. -----
             logits, _, _ = self.model(x, self.text_x, True, interpolate=False)
-            ent_map = self.softmax_entropy(logits)                # (B, w, h) reduced over class
+            ent_map = self.softmax_entropy(logits)        # (B, w, h)
             ent_mean = ent_map.mean()
-            ent_mean_for_log = ent_mean.item()
 
-            # Filter (A): skip unreliable sample entirely
+            # ----- DivGate buffer push (every batch, regardless of filter) -----
+            with torch.no_grad():
+                probs = logits[0].softmax(dim=1)                          # (B, C, w, h)
+                self.marginal_buf.append(
+                    probs.mean(dim=[0, 2, 3]).detach().float().cpu()
+                )
+
+            # ----- SAR filter A: skip whole sample if unreliable -----
             if ent_mean.item() > self.e_margin:
-                was_filtered = True
                 self.optimizer.zero_grad()
                 continue
 
-            # Filter (A) passed → compute loss only on reliable pixels
-            # (per-pixel entropy < e_margin within the kept sample).
+            # ----- SAR filter B: keep only reliable pixels -----
             pixel_mask = ent_map < self.e_margin
             if pixel_mask.sum().item() == 0:
-                was_filtered = True
                 self.optimizer.zero_grad()
                 continue
             loss = ent_map[pixel_mask].mean()
@@ -189,68 +223,93 @@ class SARContinual:
             ent_map2 = self.softmax_entropy(logits2)
             pixel_mask2 = ent_map2 < self.e_margin
             if pixel_mask2.sum().item() == 0:
-                # Edge case: perturbation made all pixels unreliable. Skip update
-                # but restore weights from the perturbed position.
+                # Perturbation made all pixels unreliable: restore weights
+                # but skip the real update. No restore either (no step taken).
                 self.optimizer.second_step(zero_grad=True)
                 continue
             loss2 = ent_map2[pixel_mask2].mean()
             loss2.backward()
             self.optimizer.second_step(zero_grad=True)
 
-            # ----- Update loss EMA (use the second-step loss) -----
-            current_loss = loss2.item()
-            if self.loss_ma is None:
-                self.loss_ma = current_loss
-            else:
-                self.loss_ma = (self.ema_factor * self.loss_ma
-                                + (1.0 - self.ema_factor) * current_loss)
+            # ----- DivGate stochastic restore (only when real step happened) -----
+            if self.current_rst > 0.0:
+                self._stochastic_restore_flat(self.current_rst)
 
-            # ----- Filter (C): model recovery -----
-            if (self.total_batches >= self.recovery_warmup
-                    and self.loss_ma is not None
-                    and self.loss_ma < self.e_0):
-                self._model_recovery()
-                was_reset = True
-
+        self.batch_count += 1
         self.total_batches += 1
-        if self.log_path is not None:
-            try:
-                with open(self.log_path, 'a') as f:
-                    f.write(f"{self.total_batches},{ent_mean_for_log:.6f},"
-                            f"{int(was_filtered)},"
-                            f"{self.loss_ma if self.loss_ma is not None else float('nan'):.6f},"
-                            f"{int(was_reset)}\n")
-            except OSError:
-                pass
+        if self.batch_count >= self.monitor_interval:
+            self._update_mode()
 
         if self.runtime:
             self.adapt_times.append(time.time() - t1)
         return loss_report
 
     # ===========================================================
-    # Model recovery
+    # Diversity gate (identical to TENTDivGateContinual)
     # ===========================================================
+
+    @staticmethod
+    def _pick_mode(h_margin, h_threshold, h_warning):
+        if h_margin >= h_threshold:
+            return MODE_AGGRESSIVE
+        if h_margin >= h_warning:
+            return MODE_CAUTIOUS
+        return MODE_BRAKE
+
+    def _mode_to_rst(self, mode):
+        if mode == MODE_AGGRESSIVE:
+            return 0.0
+        if mode == MODE_CAUTIOUS:
+            return self.cautious_rst
+        if mode == MODE_BRAKE:
+            return self.brake_rst
+        raise ValueError(f"unknown mode {mode!r}")
 
     @torch.no_grad()
-    def _model_recovery(self):
+    def _update_mode(self):
+        if len(self.marginal_buf) == 0:
+            self.batch_count = 0
+            return
+        agg = torch.stack(self.marginal_buf, dim=0).mean(dim=0)
+        agg = agg / agg.sum().clamp(min=1e-8)
+        h_margin = -(agg * agg.clamp(min=1e-12).log()).sum().item()
+
+        new_mode = self._pick_mode(h_margin, self.h_threshold, self.h_warning)
+        if new_mode != self.current_mode:
+            print(f"[DivGate-S] B{self.total_batches}: H_margin={h_margin:.3f}  "
+                  f"{self.current_mode} -> {new_mode}")
+        self.current_mode = new_mode
+        self.current_rst = self._mode_to_rst(new_mode)
+
+        if self.log_path is not None:
+            try:
+                with open(self.log_path, 'a') as f:
+                    f.write(f"{self.total_batches},{h_margin:.6f},{self.current_mode}\n")
+            except OSError:
+                pass
+
+        self.marginal_buf.clear()
+        self.batch_count = 0
+
+    @torch.no_grad()
+    def _stochastic_restore_flat(self, rst):
         for name, p in self.named_ln_params:
+            mask = (torch.rand(p.shape, device=p.device) < rst).to(p.dtype)
             src = self.model_state[name].to(p.device, dtype=p.dtype)
-            p.data.copy_(src)
-        self.loss_ma = None
-        print(f"[SAR] B{self.total_batches}: model recovery triggered (loss_ma dropped below e_0={self.e_0})")
+            p.data.mul_(1.0 - mask).add_(src * mask)
 
     # ===========================================================
-    # Loss (per-pixel entropy, dim=-3 over classes)
+    # Loss (SAR convention: reduce class dim, average over prompt)
     # ===========================================================
 
     @staticmethod
     def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
         # x: (T, B, C, w, h) — sum over class dim, reduce T by mean
         ent = -(x.softmax(-3) * x.log_softmax(-3)).sum(-3)   # (T, B, w, h)
-        return ent.mean(dim=0)                                 # (B, w, h)
+        return ent.mean(dim=0)                                # (B, w, h)
 
     # ===========================================================
-    # Shared helpers (mirroring TENTDivGateContinual)
+    # Shared helpers (mirroring SARContinual / TENTDivGateContinual)
     # ===========================================================
 
     def extract_text_embeddings(self, class_names, prompts, average=True):
