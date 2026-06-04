@@ -55,6 +55,7 @@ from .eata_continual import EATAContinual
 from .dat_continual import DATContinual
 from .deyo_mlmp_divgate_continual import DeYOMLMPDivGateContinual
 from .deyo_mlmp_smooth_anchor_continual import DeYOMLMPSmoothAnchorContinual
+from .mlmp_divgate_continual import MLMPDivGateContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -157,6 +158,8 @@ METHOD_CLASSES = {
     'deyo_mlmp_divgate_continual': DeYOMLMPDivGateContinual,
     # DeYO + MLMP + SmoothAnchor (continuous lag(H) restore)
     'deyo_mlmp_smooth_anchor_continual': DeYOMLMPSmoothAnchorContinual,
+    # Continual TTA with MLMP loss + diversity-gated stochastic restoration
+    'mlmp_divgate_continual': MLMPDivGateContinual,
 }
 
 

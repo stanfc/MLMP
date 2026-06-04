@@ -16,37 +16,37 @@ MODE_CAUTIOUS = 'cautious'
 MODE_BRAKE = 'brake'
 
 
-class TENTDivGateContinual:
+class MLMPDivGateContinual:
     """
-    TENT-DivGate-Continual: pure TENT pixel-wise entropy loss + diversity-gated
+    MLMP-DivGate-Continual: MLMP multi-prompt multi-level entropy loss + diversity-gated
     stochastic restoration (CTTA, no reset).
 
-    Same gate mechanism as CMADivGateContinual; only the base loss differs.
-    The pixel-wise entropy is computed over every spatial position (no Top-K
-    mask), matching the standard TENT formulation in adapt/tent_continual.py.
+    Loss: identical to MLMPContinual (perform_adaptation) — pixel entropy averaged
+    over T prompts plus optional ILE (CLS-token entropy weighted by alpha_cls).
+    Supports both prompt_integration='loss' and 'text' modes.
 
-    Every `monitor_interval` adapt batches, the marginal class entropy
-    H_margin is computed from a buffer of per-batch marginal distributions
-    and used to pick one of three modes:
-
-        H_margin >= h_threshold              -> "aggressive" (rst = 0)
-        h_warning <= H_margin < h_threshold  -> "cautious"   (rst = cautious_rst)
-        H_margin < h_warning                  -> "brake"      (rst = brake_rst)
-
-    See docs/tent_divgate_continual_spec.md for the full design.
+    Gate: identical to TENTDivGateContinual / CMADivGateContinual. Every
+    monitor_interval batches, marginal class entropy H_margin is computed from
+    a buffer of per-batch marginals (averaged over prompts when applicable),
+    and restoration probability is selected from three modes.
     """
 
-    def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
+    def __init__(self, ovss_type, ovss_backbone, lr, classes,
+                 vision_outputs=(-1,), alpha_cls=0.0, steps=1,
+                 prompt_dir='prompts.yaml', prompt_integration='loss',
                  h_threshold=1.8, h_warning=1.2,
                  monitor_interval=50,
                  cautious_rst=0.005, brake_rst=0.05,
-                 prompt_dir=None,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
         self.ovss_backbone = ovss_backbone
         self.lr = lr
         self.steps = steps
+        self.vision_outputs = vision_outputs
+        self.alpha_cls = alpha_cls
+        self.prompt_dir = prompt_dir
+        self.prompt_integration = prompt_integration
 
         self.h_threshold = float(h_threshold)
         self.h_warning = float(h_warning)
@@ -70,6 +70,9 @@ class TENTDivGateContinual:
             raise ValueError("classes is required in __init__")
         self.classes = classes
 
+        assert prompt_integration in ['loss', 'text'], \
+            "prompt_integration must be 'loss' or 'text'"
+
         # ---------- OVSS model ----------
         self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
 
@@ -80,7 +83,9 @@ class TENTDivGateContinual:
         else:
             self.prompt_templates = [REFERENCE_PROMPT]
 
-        # ---------- Freeze text encoder, enable LN grads ----------
+        print(f"+++ Vision outputs (UAML layers): {self.vision_outputs}")
+
+        # ---------- Freeze text encoder, enable LN grads in visual encoder ----------
         self.model.transformer.requires_grad_(False)
         self.model.ln_final.requires_grad_(False)
         self.model.token_embedding.requires_grad_(False)
@@ -89,7 +94,7 @@ class TENTDivGateContinual:
         self.named_ln_params = list(zip(names, params))
 
         print_clip_parameters(self.model)
-        print(f"+++ TENT-DivGate: thresholds=(warn {self.h_warning}, agg {self.h_threshold}), "
+        print(f"+++ MLMP-DivGate: thresholds=(warn {self.h_warning}, agg {self.h_threshold}), "
               f"monitor_interval={self.monitor_interval}, "
               f"rsts=(cautious {self.cautious_rst}, brake {self.brake_rst})")
         print(f"+++ Initial mode: {MODE_AGGRESSIVE} (rst=0); buffer fills before first re-evaluation")
@@ -103,10 +108,10 @@ class TENTDivGateContinual:
             self.model, self.optimizer
         )
 
-        # ---------- Text features ----------
+        # ---------- Text embeddings: shape (T+1, C, D); avg at index [-1] ----------
         with torch.no_grad():
             self.text_x = self.extract_text_embeddings(
-                self.classes, self.prompt_templates, average=False
+                self.classes, self.prompt_templates, average=True
             ).squeeze()
 
         # ---------- Gate state ----------
@@ -117,10 +122,6 @@ class TENTDivGateContinual:
         self.current_rst = 0.0
 
         # ---------- Optional per-monitor file log ----------
-        # If save_dir is provided (auto-injected by main_continual.py via
-        # inspect-based dispatch), write H_margin trajectory to
-        # {save_dir}/divgate_log.txt -- one row per _update_mode() call.
-        # Format: total_batches,h_margin,mode  (CSV, '#'-prefixed header).
         self.log_path = None
         if save_dir is not None:
             try:
@@ -146,13 +147,18 @@ class TENTDivGateContinual:
         return self.perform_adaptation(x)
 
     def continual_adapt(self, x):
-        """Alias for adapt() -- matches main_continual.py protocol."""
         return self.perform_adaptation(x)
 
     @torch.no_grad()
     def evaluate(self, x):
         t1 = time.time()
-        logits, _, _ = self.model(x, self.text_x, True, interpolate=True)
+        logits, _, _ = self.model(
+            x, self.text_x[-1], True,
+            vision_outputs=self.vision_outputs,
+            interpolate=True,
+            vision_out_type="adaptive_weighted_mean",
+            save_weights=True
+        )
         logits = logits[0]
         if self.runtime:
             self.eval_times.append(time.time() - t1)
@@ -164,40 +170,68 @@ class TENTDivGateContinual:
         )
 
     # ===========================================================
-    # Adaptation
+    # Adaptation (MLMP loss + diversity gate)
     # ===========================================================
 
     def perform_adaptation(self, x):
         t1 = time.time()
         loss_report = []
+
         for _ in range(self.steps):
-            logits, _, _ = self.model(x, self.text_x, True, interpolate=False)
-
-            # Buffer per-batch marginal class distribution for the gate
-            # (in the same no_grad block where pseudo-labels would live).
-            with torch.no_grad():
-                probs = logits[0].softmax(dim=1)                           # (B, C, w, h)
-                self.marginal_buf.append(
-                    probs.mean(dim=[0, 2, 3]).detach().float().cpu()
+            if self.prompt_integration == 'loss':
+                logits, _, _, cls_logits = self.model(
+                    x, self.text_x[:-1], True,
+                    interpolate=False,
+                    vision_outputs=self.vision_outputs,
+                    return_vanilla_cls=True,
+                    vision_out_type="mean"
                 )
+                # logits:     (T, B, C, h, w)
+                # cls_logits: (T, B, C, 1, 1)
+                entropy_per_pixel = self.softmax_entropy(logits)            # (T, B, h, w)
+                entropy_per_cls = self.softmax_entropy(cls_logits, dim=2)   # (T, B, 1, 1)
+                loss = entropy_per_pixel.mean() + self.alpha_cls * entropy_per_cls.mean()
 
-            loss = self.softmax_entropy(logits).mean()
+                with torch.no_grad():
+                    avg_logits = logits.mean(dim=0)  # (B, C, h, w)
+                    probs = avg_logits.softmax(dim=1)
+                    self.marginal_buf.append(
+                        probs.mean(dim=[0, 2, 3]).detach().float().cpu()
+                    )
+
+            else:  # 'text' branch
+                logits, _, _ = self.model(
+                    x, self.text_x[-1], True,
+                    interpolate=False,
+                    vision_outputs=self.vision_outputs
+                )
+                loss = self.softmax_entropy(logits).mean()
+
+                with torch.no_grad():
+                    flat = logits if logits.dim() == 4 else logits.reshape(-1, *logits.shape[-3:])
+                    probs = flat.softmax(dim=1)
+                    self.marginal_buf.append(
+                        probs.mean(dim=[0, 2, 3]).detach().float().cpu()
+                    )
+
             loss_report.append(loss.item())
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
             if self.current_rst > 0.0:
                 self._stochastic_restore_flat(self.current_rst)
+
         self.batch_count += 1
         self.total_batches += 1
         if self.batch_count >= self.monitor_interval:
             self._update_mode()
+
         if self.runtime:
             self.adapt_times.append(time.time() - t1)
         return loss_report
 
     # ===========================================================
-    # Diversity gate (identical to CMADivGateContinual)
+    # Diversity gate (identical to TENT/CMA DivGate variants)
     # ===========================================================
 
     @staticmethod
@@ -228,7 +262,7 @@ class TENTDivGateContinual:
 
         new_mode = self._pick_mode(h_margin, self.h_threshold, self.h_warning)
         if new_mode != self.current_mode:
-            print(f"[DivGate-T] B{self.total_batches}: H_margin={h_margin:.3f}  "
+            print(f"[DivGate-M] B{self.total_batches}: H_margin={h_margin:.3f}  "
                   f"{self.current_mode} -> {new_mode}")
         self.current_mode = new_mode
         self.current_rst = self._mode_to_rst(new_mode)
@@ -251,16 +285,7 @@ class TENTDivGateContinual:
             p.data.mul_(1.0 - mask).add_(src * mask)
 
     # ===========================================================
-    # Loss (pure TENT, no Top-K mask)
-    # ===========================================================
-
-    @staticmethod
-    def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
-        # x shape: (T, B, C, w, h); class dim is -3
-        return -(x.softmax(-3) * x.log_softmax(-3)).sum(-3)
-
-    # ===========================================================
-    # Shared helpers (verbatim from TENTContinual / CMADivGateContinual)
+    # Shared helpers (verbatim from MLMPContinual / TENTDivGateContinual)
     # ===========================================================
 
     def extract_text_embeddings(self, class_names, prompts, average=True):
@@ -304,3 +329,7 @@ class TENTDivGateContinual:
     def load_model_and_optimizer(model, optimizer, model_state, optimizer_state):
         model.load_state_dict(model_state, strict=True)
         optimizer.load_state_dict(optimizer_state)
+
+    @staticmethod
+    def softmax_entropy(x: torch.Tensor, dim=-3) -> torch.Tensor:
+        return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)

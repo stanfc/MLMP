@@ -340,15 +340,17 @@ def add_method_specific_args(parser, method):
 
     # --- SAR (Sharpness-Aware Reliable TTA, ICLR 2023) ---
     elif method == 'sar_continual':
-        parser.add_argument('--margin_e0_factor', type=float, default=0.4,
-                            help='SAR entropy filter margin = factor*log(C) (default 0.4)')
-        parser.add_argument('--reset_constant_em', type=float, default=0.2,
-                            help='SAR EMA threshold for model recovery (default 0.2)')
-        parser.add_argument('--sar_rho', type=float, default=0.05,
-                            help='SAM neighborhood radius (default 0.05)')
-        parser.add_argument('--top_block_exclude', type=int, default=6,
-                            help='Number of trailing ViT blocks excluded from '
-                                 'adaptation (default 6, i.e. blocks 18-23 on ViT-L/14)')
+        parser.add_argument('--e_margin', type=float, default=1.198,
+                            help='Per-sample mean entropy threshold; samples > this are skipped. '
+                                 'Default 1.198 = 0.4 * ln(20) for VOC20.')
+        parser.add_argument('--sam_rho', type=float, default=0.05,
+                            help='SAM perturbation radius (default 0.05 from SAR paper)')
+        parser.add_argument('--e_0', type=float, default=0.2,
+                            help='If loss EMA exceeds this, reset model to source')
+        parser.add_argument('--ema_factor', type=float, default=0.9,
+                            help='EMA decay for the loss moving average')
+        parser.add_argument('--recovery_warmup', type=int, default=50,
+                            help='Number of batches before recovery can fire')
 
     # --- DeYO (Entropy is not Enough, ICLR 2024 spotlight) ---
     elif method == 'deyo_continual':
@@ -442,14 +444,15 @@ def add_method_specific_args(parser, method):
 
     # --- EATA (Efficient Anti-forgetting TTA, ICML 2022) ---
     elif method == 'eata_continual':
-        parser.add_argument('--e_margin_factor', type=float, default=0.4,
-                            help='Reliable-entropy threshold = factor*log(C) (default 0.4)')
+        parser.add_argument('--e_margin', type=float, default=1.198,
+                            help='Per-sample mean entropy threshold for reliable filter')
         parser.add_argument('--d_margin', type=float, default=0.05,
-                            help='Cosine redundancy threshold (default 0.05)')
+                            help='Cosine-similarity gap for non-redundant filter; '
+                                 'a sample is kept if cos(sample, ema) < 1 - d_margin')
         parser.add_argument('--fisher_alpha', type=float, default=2000.0,
-                            help='EWC trade-off for Fisher regularizer (default 2000)')
-        parser.add_argument('--fisher_size', type=int, default=200,
-                            help='Source patches for Fisher estimate (default 200)')
+                            help='Weight on EWC penalty in total loss')
+        parser.add_argument('--fisher_size', type=int, default=2000,
+                            help='Number of clean source samples used to estimate Fisher')
 
     # --- RoTTA (Robust TTA in Dynamic Scenarios, CVPR 2023) ---
     elif method == 'rotta_continual':
@@ -536,6 +539,16 @@ def add_method_specific_args(parser, method):
                             help='Stochastic restore probability in cautious mode')
         parser.add_argument('--brake_rst', type=float, default=0.05,
                             help='Stochastic restore probability in brake mode')
+
+    elif method == 'mlmp_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=1.0)
+        parser.add_argument('--h_threshold', type=float, default=1.8)
+        parser.add_argument('--h_warning', type=float, default=1.5)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
 
     elif method == 'tent_divgate_recent_anchor':
         parser.add_argument('--h_threshold', type=float, default=1.8)
@@ -821,6 +834,30 @@ def main(args):
         adapt_method.obtain_src_stat(src_loader)
         del src_loader
 
+    # EATA-Continual requires a one-time forward pass on clean source data to
+    # compute the per-LN-param Fisher diagonal (used as EWC weights). Mirrors
+    # DPCore's obtain_src_stat pattern; uses corruption="original" so no
+    # CorruptTransform is inserted into the pipeline.
+    if args.method == 'eata_continual':
+        src_dataset  = args.src_dataset    or args.dataset
+        src_data_dir = args.src_data_dir   or args.data_dir
+        # Datasets with a clean val split (VOC, Cityscapes) use "original".
+        # ACDC has no clean split — pass --src_corruption fog (or another
+        # condition) to use it as a source proxy, mirroring cma_proto_continual.
+        src_corruption = args.src_corruption or 'original'
+
+        print(f"\n[EATA] Loading source: dataset='{src_dataset}', "
+              f"data_dir='{src_data_dir}', corruption='{src_corruption}' ...")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False
+        )
+        adapt_method.obtain_src_fisher(src_loader)
+        del src_loader
+
     # CMA-Proto-continual requires per-class source prototypes before adaptation.
     # Unlike DPCore (unsupervised feature stats), the prototype bank groups visual
     # features by CLIP pseudo-label. ACDC has no clean source, so by default we
@@ -841,26 +878,6 @@ def main(args):
             shuffle=False
         )
         adapt_method.obtain_src_prototypes(src_loader)
-        del src_loader
-
-    # EATA needs a pre-stream Fisher-information pass on a source proxy to
-    # build the anti-forgetting (EWC) regularizer. ACDC has no clean source,
-    # so the first condition is the proxy (same convention as CMA-Proto).
-    if args.method == 'eata_continual':
-        src_dataset    = args.src_dataset    or args.dataset
-        src_data_dir   = args.src_data_dir   or args.data_dir
-        src_corruption = args.src_corruption or conditions[0]
-
-        print(f"\n[EATA] Loading source proxy for Fisher: "
-              f"dataset='{src_dataset}', corruption='{src_corruption}'")
-        src_loader, _ = segmentation_datasets.prepare_data(
-            src_dataset, src_data_dir, args.init_resize,
-            args.patch_size, args.patch_stride,
-            corruption=src_corruption,
-            batch_size=args.batch_size, num_workers=args.workers,
-            shuffle=False
-        )
-        adapt_method.compute_fishers(src_loader)
         del src_loader
 
     all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}

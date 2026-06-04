@@ -1,23 +1,19 @@
 #!/bin/bash
-# No-Adaptation baseline on PascalVOC20Dataset (CTTA, N rounds).
-# Runs off-the-shelf NA-CLIP without any weight updates.
-# Results are constant across all rounds — zero-shot source model performance.
-# Use this to establish the lower bound before comparing continual TTA methods.
+# MLMP-Continual on CityscapesDataset (CTTA, N rounds).
+# Multi-prompt entropy + ILE loss, model state NEVER reset between samples.
+# 15 ImageNet-C corruptions applied on-the-fly.
 #
-# ─── Patch convention (DO NOT CHANGE without noting in result file) ───
-# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (matches MLMP paper).
-# This is THE comparable v20 setting; results from other patch settings
-# are not directly comparable. See
-# docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
+# Expected behaviour: gradual performance decline over rounds (no anti-forgetting
+# mechanism). Use as ablation baseline against cotta.sh and tent_divgate_continual.sh.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=1
 
 # ── Dataset ────────────────────────────────────────────────────────
-DATASET=PascalVOC20Dataset
-DATA_DIR="data/VOC/VOC2012/"
-INIT_RESIZE="224 224"
-WORKERS=1
+DATASET=CityscapesDataset
+DATA_DIR="data/Cityscape/"
+INIT_RESIZE="1120 560"
+WORKERS=4
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 # Comment out individual lines to run a subset.
@@ -42,24 +38,38 @@ CORRUPTIONS_ARRAY=(
     pixelate
     jpeg_compression
 )
-# One-liner subset override: CORRUPTIONS_LIST="fog snow" bash script.sh
+# One-liner subset override: CORRUPTIONS_LIST="fog snow frost brightness" bash script.sh
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
 
 # ── Method ─────────────────────────────────────────────────────────
-METHOD="tent_continual"   # lightest runner; --adapt is omitted so no updates occur
+METHOD="mlmp_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
+# ── MLMP multi-level: last 18 layers of ViT-L/14 ──────────────────
+OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
+PROMPT_DIR="prompts.yaml"
+ALPHA_CLS=1.0
+
+# ── Training hyperparameters ───────────────────────────────────────
+BATCH_SIZE=1
+LR=0.00001
+STEPS=1
+
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-BATCH_SIZE=1
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/No_Adaptation/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
+                        --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
+                        \
+                        --vision_outputs $OUT_VISION \
+                        --prompt_dir $PROMPT_DIR \
+                        --alpha_cls $ALPHA_CLS \
                         \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \
@@ -69,6 +79,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
                         \
+                        --lr $LR \
+                        --steps $STEPS \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \

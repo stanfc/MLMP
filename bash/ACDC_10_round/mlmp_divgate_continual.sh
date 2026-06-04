@@ -1,15 +1,14 @@
 #!/bin/bash
-# MLMP-Continual on ACDC (10-round CTTA).
-# Naive continual version of MLMP: identical adaptation signal (multi-prompt
-# entropy + ILE) but model state is NEVER reset between samples.
+# MLMP-DivGate-Continual on ACDC (CTTA, 150 rounds).
+# MLMP multi-prompt multi-level entropy loss + diversity-gated stochastic restoration.
 #
-# Expected behaviour: performance may degrade across rounds due to error
-# accumulation and catastrophic forgetting — no anti-forgetting mechanism.
-# Use this as an ablation baseline against mlmp_cotta.sh to isolate the
-# contribution of CoTTA's EMA teacher + stochastic restoration.
+# Sanity-check counterpart to bash/cityscapes_continual/mlmp_divgate_continual.sh:
+# MLMP-continual on ACDC peaks at ~28-29 mIoU (mean 28.9 step=1) and degrades
+# slowly. The gate should prevent late-round drift; if MLMP-DivGate beats
+# MLMP-continual here, the same recipe is worth pushing on Cityscapes weather.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=1
 
 # Dataset Configuration
 DATASET=ACDCDataset
@@ -19,27 +18,31 @@ CONDITIONS="fog night rain snow"
 WORKERS=4
 
 # Method Configuration
-METHOD="mlmp_continual"
+METHOD="mlmp_divgate_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
 # MLMP multi-level: use last 18 layers of ViT-L/14
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
 PROMPT_DIR="prompts.yaml"
+PROMPT_INTEGRATION="loss"
 ALPHA_CLS=1.0
 
-# Hyperparameters
+# Hyperparameters (match mlmp_continual.sh)
 BATCH_SIZE=1
-LR=0.00001      # lower than episodic TTA — updates accumulate over 10 rounds
-STEPS=1        # online: 1 step per sample
+LR=0.00001
+STEPS=1
 
-# Experiment
+# Diversity gate (best confirmed hyperparameters from TENT-DivGate ACDC sweep)
+H_THRESHOLD=1.6       # H_margin >= this  -> aggressive (rst=0)
+H_WARNING=1.4         # h_warning <= H < h_threshold -> cautious; < h_warning -> brake
+MONITOR_INTERVAL=50
+CAUTIOUS_RST=0.01
+BRAKE_RST=0.05
+
 CONTINUAL_ROUNDS=150
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_threshold_${H_THRESHOLD}/}"
 
-# Output
-SAVE_DIR="save/${DATASET}/${METHOD}_round_${CONTINUAL_ROUNDS}_step_${STEPS}/"
-
-# Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
                         --method $METHOD \
@@ -48,6 +51,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         \
                         --vision_outputs $OUT_VISION \
                         --prompt_dir $PROMPT_DIR \
+                        --prompt_integration $PROMPT_INTEGRATION \
                         --alpha_cls $ALPHA_CLS \
                         \
                         --dataset $DATASET \
@@ -63,6 +67,12 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
+                        \
+                        --h_threshold $H_THRESHOLD \
+                        --h_warning $H_WARNING \
+                        --monitor_interval $MONITOR_INTERVAL \
+                        --cautious_rst $CAUTIOUS_RST \
+                        --brake_rst $BRAKE_RST \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions
