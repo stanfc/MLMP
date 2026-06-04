@@ -1,0 +1,93 @@
+import os
+import re
+import csv
+
+SCRIPT_DIR = os.path.dirname(__file__)
+REPO_DIR = os.path.join(SCRIPT_DIR, "..")
+SAVE_DIR = os.path.join(REPO_DIR, ".save")
+CITYSCAPES_DIR = os.path.join(SAVE_DIR, "CityscapesDataset")
+OUTPUT_CSV = os.path.join(REPO_DIR, "results", "results_cityscapes_mlmp_variants.csv")
+
+METHODS = ["mlmp_batch1_steps10_trail_1", "mlmp", "mlmp_continual"]
+
+
+def parse_metric(s):
+    s = s.strip()
+    m = re.match(r"([\d.]+)\s*\+/-\s*([\d.]+)", s)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    return None, None
+
+
+def get_corruption_name(entry):
+    parts = entry.split("_", 1)
+    if len(parts) < 2 or not parts[0].isdigit():
+        return None
+    return parts[1]
+
+
+rows = []
+all_corruptions = set()
+
+for method in METHODS:
+    method_dir = os.path.join(CITYSCAPES_DIR, method)
+    if not os.path.isdir(method_dir):
+        print(f"Warning: Method directory not found: {method_dir}")
+        continue
+
+    for entry in sorted(os.listdir(method_dir)):
+        sub_dir = os.path.join(method_dir, entry)
+        if not os.path.isdir(sub_dir):
+            continue
+
+        corruption = get_corruption_name(entry)
+        if corruption is None:
+            continue
+
+        all_corruptions.add(corruption)
+        results_path = os.path.join(sub_dir, "results.txt")
+        if not os.path.isfile(results_path):
+            print(f"Warning: results.txt not found in {sub_dir}")
+            continue
+
+        with open(results_path, "r") as f:
+            lines = f.readlines()
+
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("mIoU"):
+                continue
+
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 3:
+                continue
+
+            miou_mean, miou_std = parse_metric(parts[0])
+            mdice_mean, mdice_std = parse_metric(parts[1])
+            macc_mean, macc_std = parse_metric(parts[2])
+
+            if miou_mean is None:
+                continue
+
+            rows.append({
+                "method": method,
+                "corruption": corruption,
+                "mIoU_mean": miou_mean,
+                "mIoU_std": miou_std,
+                "mDice_mean": mdice_mean,
+                "mDice_std": mdice_std,
+                "mAcc_mean": macc_mean,
+                "mAcc_std": macc_std,
+            })
+            break
+
+fieldnames = ["method", "corruption", "mIoU_mean", "mIoU_std", "mDice_mean", "mDice_std", "mAcc_mean", "mAcc_std"]
+
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+with open(OUTPUT_CSV, "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+
+print(f"Wrote {len(rows)} rows to {OUTPUT_CSV}")
+print(f"Corruptions found: {sorted(all_corruptions)}")
