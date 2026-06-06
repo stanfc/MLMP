@@ -18,7 +18,7 @@ GPU_ID=${GPU_ID:-3}
 DATASET=CityscapesDataset
 DATA_DIR="data/Cityscape/"
 INIT_RESIZE="1120 560"
-WORKERS=4
+WORKERS=1
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 CORRUPTIONS_ARRAY=(

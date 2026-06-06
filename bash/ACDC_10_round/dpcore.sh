@@ -15,7 +15,7 @@ DATASET=ACDCDataset
 DATA_DIR="data/ACDC/"
 INIT_RESIZE="224 224"
 CONDITIONS="fog night rain snow"
-WORKERS=4
+WORKERS=1
 
 # DPCore source statistics: use clean Cityscapes, NOT fog-as-source.
 # Fog-as-source makes loss_raw≈0 for fog test batches → ID condition impossible.

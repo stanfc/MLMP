@@ -14,7 +14,7 @@ DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog"
 SPLIT="train+val"        # 400 train + 100 val = 500 fog images
-WORKERS=4
+WORKERS=1
 
 # Method Configuration
 METHOD="mlmp"

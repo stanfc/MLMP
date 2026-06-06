@@ -8,7 +8,7 @@ DATASET=ACDCMerged3Dataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
-WORKERS=4
+WORKERS=1
 
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"

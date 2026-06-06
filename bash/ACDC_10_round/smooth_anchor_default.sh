@@ -13,13 +13,13 @@ export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=${GPU_ID:-0}
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
-WORKERS=0
+WORKERS=1
 
 METHOD="tent_divgate_smooth_anchor"
 OVSS_TYPE="naclip"

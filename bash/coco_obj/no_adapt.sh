@@ -6,7 +6,7 @@ DATASET=COCOObjectDataset
 DATA_DIR=".data/coco_object/"
 INIT_RESIZE="224 224"
 ALL_CORRUPTIONS="original"
-WORKERS=4
+WORKERS=1
 
 # Method and OVSS Model Configuration
 OVSS_TYPE="naclip"

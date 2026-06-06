@@ -19,7 +19,7 @@ GPU_ID=0
 DATASET=PascalVOC21Dataset
 DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
-WORKERS=4
+WORKERS=1
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 # Comment out individual lines to run a subset.

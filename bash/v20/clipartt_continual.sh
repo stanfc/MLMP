@@ -12,7 +12,7 @@ DATASET=PascalVOC20Dataset
 DATA_DIR=".data/VOC2012/"
 INIT_RESIZE="224 224"
 ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
-WORKERS=0
+WORKERS=1
 SUBSET_SIZE=100
 SUBSET_SEED=0
 

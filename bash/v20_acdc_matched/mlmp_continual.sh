@@ -12,7 +12,7 @@ GPU_ID=3
 DATASET=PascalVOC20Dataset
 DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
-WORKERS=4
+WORKERS=1
 
 # ── ACDC-matched subset (101 × 4 = 404 ≈ ACDC's 406/round) ─────────
 IMAGES_PER_CORRUPTION=101

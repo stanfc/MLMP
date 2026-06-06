@@ -12,7 +12,7 @@ DATASET=PascalVOC20Dataset
 DATA_DIR=".data/VOC2012/"
 INIT_RESIZE="224 224"
 CONDITIONS="snow frost fog brightness contrast"
-WORKERS=0
+WORKERS=1
 
 METHOD="deyo_mlmp_divgate_continual"
 OVSS_TYPE="naclip"

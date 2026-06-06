@@ -8,7 +8,7 @@ DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1152 768"
 CONDITIONS="fog night rain snow"
-WORKERS=2
+WORKERS=1
 
 METHOD="tent_divgate_continual_catseg"
 OVSS_TYPE="catseg"

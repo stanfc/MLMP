@@ -7,7 +7,7 @@ DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
-WORKERS=4
+WORKERS=1
 
 METHOD="rotta_continual"
 OVSS_TYPE="naclip"

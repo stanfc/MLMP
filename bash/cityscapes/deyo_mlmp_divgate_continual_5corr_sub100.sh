@@ -12,7 +12,7 @@ DATASET=CityscapesDataset
 DATA_DIR=".data/cityscapes/"
 INIT_RESIZE="1120 560"
 CONDITIONS="snow frost fog brightness contrast"
-WORKERS=0
+WORKERS=1
 
 METHOD="deyo_mlmp_divgate_continual"
 OVSS_TYPE="naclip"

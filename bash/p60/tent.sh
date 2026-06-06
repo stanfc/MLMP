@@ -6,7 +6,7 @@ DATASET=PascalContext60Dataset
 DATA_DIR=".data/VOC2010/"
 INIT_RESIZE="224 224"
 ALL_CORRUPTIONS="original gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
-WORKERS=4
+WORKERS=1
 
 # Method and OVSS Model Configuration
 METHOD="tent"

@@ -16,7 +16,7 @@ DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="224 224"
 CONDITIONS="fog night rain snow"
-WORKERS=4
+WORKERS=1
 
 # Source statistics: clean Cityscapes (matching DPCore convention).
 SRC_DATASET=CityscapesDataset

@@ -13,7 +13,7 @@ DATASET=PascalVOC20Dataset
 DATA_DIR=".data/VOC2012/"
 INIT_RESIZE="224 224"
 CONDITIONS="snow frost fog brightness contrast"
-WORKERS=0
+WORKERS=1
 SUBSET_SIZE=100
 SUBSET_SEED=0
 

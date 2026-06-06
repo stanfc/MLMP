@@ -23,7 +23,7 @@ INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 OVERLAYS="gaussian_noise shot_noise defocus_blur jpeg_compression"
 SEVERITY=5
-WORKERS=0
+WORKERS=1
 
 METHOD="tent_continual"
 OVSS_TYPE="naclip"

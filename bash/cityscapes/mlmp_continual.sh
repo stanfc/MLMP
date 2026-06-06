@@ -7,7 +7,7 @@ DATASET=CityscapesDataset
 DATA_DIR=".data/cityscapes/"
 INIT_RESIZE="1120 560"
 ALL_CORRUPTIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
-WORKERS=4
+WORKERS=1
 
 # Method and OVSS Model Configuration
 METHOD="mlmp"

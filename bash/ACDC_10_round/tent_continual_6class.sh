@@ -31,7 +31,7 @@ DATASET=ACDCMerged6Dataset
 DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
-WORKERS=0
+WORKERS=1
 
 METHOD="tent_continual"
 OVSS_TYPE="naclip"

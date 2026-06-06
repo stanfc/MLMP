@@ -12,7 +12,7 @@ DATASET=CityscapesDataset
 DATA_DIR=".data/cityscapes/"
 INIT_RESIZE="1120 560"
 ALL_CORRUPTIONS="snow frost fog brightness contrast"
-WORKERS=0
+WORKERS=1
 SUBSET_SIZE=100
 SUBSET_SEED=0
 

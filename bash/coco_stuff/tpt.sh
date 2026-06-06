@@ -6,7 +6,7 @@ DATASET=COCOStuffDataset
 DATA_DIR=".data/coco_stuff164k/"
 INIT_RESIZE="224 224"
 ALL_CORRUPTIONS="original"
-WORKERS=4
+WORKERS=1
 
 # Method and OVSS Model Configuration
 METHOD="tpt"
