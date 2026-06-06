@@ -58,6 +58,7 @@ from .dat_continual import DATContinual
 from .deyo_mlmp_divgate_continual import DeYOMLMPDivGateContinual
 from .deyo_mlmp_smooth_anchor_continual import DeYOMLMPSmoothAnchorContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
+from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
 # Map methods to their classes
 METHOD_CLASSES = {
@@ -164,6 +165,8 @@ METHOD_CLASSES = {
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)
     'sar_divgate_continual': SARDivGateContinual,
+    # SAR (SAM + reliable filter) + full MLMP (multi-prompt/layer + UAML eval) + smooth-anchor restore
+    'sar_mlmp_smooth_anchor_continual': SARMLMPSmoothAnchorContinual,
     # Continual TTA with TENT + class-aware Dynamic Online re-weighting (DELTA DOT, ICLR 2023)
     'delta_continual': DELTAContinual,
 }

@@ -722,6 +722,35 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--brake_rst', type=float, default=0.05,
                             help='Stochastic restore probability in brake mode')
 
+    # --- SAR + full MLMP (multi-prompt/layer + UAML) + SmoothAnchor ---
+    elif method == 'sar_mlmp_smooth_anchor_continual':
+        # MLMP / UAML
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)),
+                            help='ViT layer indices for UAML multi-layer fusion')
+        parser.add_argument('--alpha_cls', type=float, default=0.0,
+                            help='ILE (CLS-entropy) weight; >0 enables the term')
+        parser.add_argument('--uaml_in_adapt', type=int, default=1,
+                            help='1: multi-layer fusion in the adapt loss; '
+                                 '0: single-layer adapt (eval still multi-layer)')
+        # SAR
+        parser.add_argument('--e_margin', type=float, default=1.8,
+                            help='Per-sample mean entropy threshold; samples > this are skipped')
+        parser.add_argument('--sam_rho', type=float, default=0.05,
+                            help='SAM perturbation radius (default 0.05 from SAR paper)')
+        # SmoothAnchor
+        parser.add_argument('--h_ceil', type=float, default=2.9,
+                            help='H_margin >= this -> no restore (~3.0 healthy for adapt-time ensemble)')
+        parser.add_argument('--h_floor', type=float, default=2.2,
+                            help='H_margin <= this -> restore toward frozen source')
+        parser.add_argument('--lag_scale', type=float, default=150.0,
+                            help='lag(H) = lag_scale / (H - h_floor)')
+        parser.add_argument('--max_lag', type=int, default=3000,
+                            help='Cap on lag; lag > max_lag falls back to source snapshot')
+        parser.add_argument('--rst', type=float, default=0.005,
+                            help='Fixed restoration rate when restore is active')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
     # --- DELTA-Continual (DOT-only, ICLR 2023) ---
     elif method == 'delta_continual':
         parser.add_argument('--dot_momentum', type=float, default=0.9,
