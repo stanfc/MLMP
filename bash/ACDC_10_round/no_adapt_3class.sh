@@ -2,7 +2,7 @@
 # No-Adaptation baseline on ACDC with 19 classes merged into 3 super-classes.
 # Same as no_adapt.sh but with --dataset ACDCMerged3Dataset.
 
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCMerged3Dataset
 DATA_DIR=".data/ACDC/"

@@ -12,7 +12,7 @@ export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

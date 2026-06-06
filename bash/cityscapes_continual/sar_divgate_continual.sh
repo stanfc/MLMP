@@ -6,7 +6,7 @@
 # See docs/sar_divgate_continual_spec.md for the full design.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset

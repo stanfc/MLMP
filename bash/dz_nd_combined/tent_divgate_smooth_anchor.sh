@@ -8,7 +8,7 @@
 # CAUTIOUS_RST=0.01). Only the restoration TARGET differs.
 
 # GPU Configuration
-GPU_ID=${GPU_ID:-0}
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

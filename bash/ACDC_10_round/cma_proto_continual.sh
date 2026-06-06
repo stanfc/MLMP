@@ -5,7 +5,7 @@
 # See docs/cma_proto_continual_spec.md for the full design.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

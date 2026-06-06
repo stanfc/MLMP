@@ -7,7 +7,7 @@
 # mechanism). Use as ablation baseline against cotta.sh and tent_divgate_continual.sh.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset

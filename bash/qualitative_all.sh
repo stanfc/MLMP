@@ -1,5 +1,5 @@
 #!/bin/bash
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 N_IMAGES=5
 SEED=42
 OVSS_TYPE="naclip"

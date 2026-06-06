@@ -8,7 +8,7 @@
 # See docs/tent_divgate_continual_spec.md for the full design.
 
 # GPU Configuration
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

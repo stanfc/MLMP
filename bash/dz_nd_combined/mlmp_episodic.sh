@@ -4,7 +4,7 @@
 # Episodic upper-bound baseline vs continual methods.
 
 # GPU Configuration
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

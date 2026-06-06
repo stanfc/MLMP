@@ -4,7 +4,7 @@
 # See docs/2026-05-17-sar-eata-v20-design.md.
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

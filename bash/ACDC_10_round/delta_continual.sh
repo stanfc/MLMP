@@ -4,7 +4,7 @@
 # TBR is omitted (NA-CLIP uses LayerNorm, no BN). See adapt/delta_continual.py.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=ACDCDataset

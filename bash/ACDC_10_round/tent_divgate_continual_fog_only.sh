@@ -6,7 +6,7 @@
 # Goal: isolate behaviour on a single domain over a longer per-round stream.
 
 # GPU Configuration
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

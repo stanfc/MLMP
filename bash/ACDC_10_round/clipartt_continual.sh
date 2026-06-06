@@ -4,7 +4,7 @@
 # Continual analogue of episodic adapt/clipartt.py.
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

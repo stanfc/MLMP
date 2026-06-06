@@ -3,7 +3,7 @@
 # Question: with the winner's mid (1.2) and width (0.8), is doubling the
 # brake cap from 0.05 -> 0.10 still beneficial, or does it over-restore?
 
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

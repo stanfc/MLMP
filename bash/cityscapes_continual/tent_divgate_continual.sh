@@ -5,7 +5,7 @@
 # See docs/2026-05-03-cityscapes-continual-divgate-design.md.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset

@@ -3,7 +3,7 @@
 # STEPS=1 + 150 rounds matches the 19-class baseline at
 # save_tekai/save/ACDCDataset/tent_continual_Round150_lr_0.00001/
 
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCMerged3Dataset
 DATA_DIR=".data/ACDC/"

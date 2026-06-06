@@ -6,7 +6,7 @@
 # Class extensions file: utils/class_extensions/acdc_6class.txt
 # log(6) ≈ 1.79, so H_THRESHOLD=1.8 is right at the theoretical max H_margin.
 
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCMerged6Dataset
 DATA_DIR=".data/ACDC/"

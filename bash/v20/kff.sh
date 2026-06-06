@@ -4,7 +4,7 @@
 # (no reset between corruptions). Reference: NeurIPS 2025, arXiv:2510.12150.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=PascalVOC20Dataset

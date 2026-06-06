@@ -4,7 +4,7 @@
 # See docs/2026-05-17-sar-eata-v20-design.md for the full design.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=ACDCDataset

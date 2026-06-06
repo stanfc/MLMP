@@ -6,7 +6,7 @@
 # INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset

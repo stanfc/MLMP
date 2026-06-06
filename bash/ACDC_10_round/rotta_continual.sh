@@ -1,7 +1,7 @@
 #!/bin/bash
 # rotta_continual on ACDC (4 conditions: fog, night, rain, snow), 150 continual rounds.
 
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

@@ -6,7 +6,7 @@ export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 DATASET=CityscapesDataset
 DATA_DIR=".data/cityscapes/"

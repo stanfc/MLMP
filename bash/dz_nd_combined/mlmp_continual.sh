@@ -3,7 +3,7 @@
 # No per-sample reset — model state carries through the whole stream.
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

@@ -13,7 +13,7 @@
 #   so we override here via --src_corruption.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=ACDCDataset

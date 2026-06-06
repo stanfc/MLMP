@@ -3,7 +3,7 @@
 # Auto-generated. Identical structure to tent_siggate_continual.sh except
 # for the gate hyperparameters and SAVE_DIR.
 
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

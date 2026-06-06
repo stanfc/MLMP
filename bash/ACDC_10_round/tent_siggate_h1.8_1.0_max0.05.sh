@@ -5,7 +5,7 @@
 # centre up to 1.4 keep more plasticity in the healthy band while still
 # braking before collapse?
 
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

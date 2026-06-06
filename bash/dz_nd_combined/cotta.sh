@@ -6,7 +6,7 @@
 # same bug observed on bash/v20_acdc_matched/cotta.sh).
 
 # GPU Configuration
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

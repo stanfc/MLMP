@@ -8,7 +8,7 @@
 # MLMP-continual here, the same recipe is worth pushing on Cityscapes weather.
 
 # GPU Configuration
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

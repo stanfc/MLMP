@@ -12,7 +12,7 @@
 # docs/superpowers/specs/2026-05-08-voc-v20-continual-scripts-design.md §2.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=PascalVOC20Dataset

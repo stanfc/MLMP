@@ -5,7 +5,7 @@
 # matching STEPS=1 so the gated and ungated runs are directly comparable.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

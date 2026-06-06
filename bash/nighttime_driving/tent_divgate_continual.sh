@@ -5,7 +5,7 @@
 # (ACDC source has 1.8 which performed worse: mean=30.14 vs 31.59).
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=NighttimeDrivingDataset

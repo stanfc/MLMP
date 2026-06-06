@@ -5,7 +5,7 @@
 # 15 ImageNet-C corruptions applied on-the-fly.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset

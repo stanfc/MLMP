@@ -5,7 +5,7 @@
 # tent_siggate_continual; only the base loss differs.
 
 # GPU Configuration
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

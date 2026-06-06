@@ -4,7 +4,7 @@
 # rounds (zero-shot source model). Companion to tent / tent_divgate fog-only runs.
 
 # GPU Configuration
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

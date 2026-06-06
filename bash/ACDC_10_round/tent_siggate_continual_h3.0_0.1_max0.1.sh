@@ -7,7 +7,7 @@
 # healthy region and only saturates near MAX_RST when H_margin -> 0.
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

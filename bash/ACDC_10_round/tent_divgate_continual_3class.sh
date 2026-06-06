@@ -13,7 +13,7 @@
 # range) are now larger than the theoretical max H_margin. Brake mode will
 # fire constantly. This is expected; we want to see what happens.
 
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCMerged3Dataset
 DATA_DIR=".data/ACDC/"

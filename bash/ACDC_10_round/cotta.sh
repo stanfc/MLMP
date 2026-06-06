@@ -8,7 +8,7 @@
 #   3. Stochastic restoration (rst=0.01) to prevent catastrophic forgetting
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

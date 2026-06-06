@@ -12,7 +12,7 @@
 #   H=0.5  -> rst ~= 0.0953  (saturated near MAX_RST)
 
 # GPU Configuration
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

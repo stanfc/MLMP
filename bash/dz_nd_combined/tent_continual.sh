@@ -5,7 +5,7 @@
 # STEPS=10 / ROUNDS=10 (matches the new 150R protocol).
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=DZ_ND_Combined

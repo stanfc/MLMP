@@ -3,7 +3,7 @@
 # Output goes to a separate dir so the old results in
 # save/ACDCDataset/tent_siggate_continual_max_0.01/ are not overwritten.
 
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

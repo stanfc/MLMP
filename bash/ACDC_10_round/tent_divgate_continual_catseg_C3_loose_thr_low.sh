@@ -2,7 +2,7 @@
 # CatSeg DivGate sweep — C3_loose_thr_low on GPU 2.
 # H_THR=1.5, H_WARN=1.3, CAU=0.005, BRAKE=0.02.
 
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

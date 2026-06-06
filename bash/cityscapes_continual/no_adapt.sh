@@ -5,7 +5,7 @@
 # Use this to establish the lower bound before comparing continual TTA methods.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset

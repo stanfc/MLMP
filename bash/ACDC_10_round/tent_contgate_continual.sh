@@ -13,7 +13,7 @@
 # in the late phase of tent_divgate_continual.
 
 # GPU Configuration
-GPU_ID=1
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

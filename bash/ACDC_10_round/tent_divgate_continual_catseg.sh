@@ -8,7 +8,7 @@
 # Both visual encoder LayerNorms AND sem_seg_head LayerNorms are trained.
 # Text encoder + token_embedding stay frozen.
 
-GPU_ID=0
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
 DATA_DIR=".data/ACDC/"

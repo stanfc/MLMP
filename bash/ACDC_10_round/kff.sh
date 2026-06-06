@@ -9,7 +9,7 @@
 #   - Two separate optimizers (domain-prompt LR and cls-prompt LR)
 
 # GPU Configuration
-GPU_ID=3
+GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset

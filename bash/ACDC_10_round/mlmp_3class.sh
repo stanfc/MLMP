@@ -3,7 +3,7 @@
 # Same as mlmp.sh but with --dataset ACDCMerged3Dataset.
 # Episodic upper bound (per-sample reset).
 
-GPU_ID=2
+GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCMerged3Dataset
 DATA_DIR=".data/ACDC/"
