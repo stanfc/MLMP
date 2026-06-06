@@ -1,52 +1,49 @@
 #!/bin/bash
-# tent_divgate_smooth_anchor: continuous H_margin -> anchor_lag mapping
+# TENT-DivGate-SMOOTH-ANCHOR on Nighttime Driving (CTTA, N rounds).
+# Smooth-anchor restoration: restore toward a snapshot lag(H) batches ago
+# (depth continuous in H_margin) instead of resetting to frozen source.
 #
-# lag(H) = 90 / (H - 1.5):
-#   H=1.80 -> lag=300        (=recent_anchor default)
-#   H=1.65 -> lag=600
-#   H=1.55 -> lag=1800
-#   H<=1.50 -> source        (also H giving lag > max_lag=3000 -> source)
-#   H>=1.80 -> no restore
-# Fixed rst=0.005 throughout the restore-active region.
+# FAIR-COMPARISON SETUP: gate geometry matched to the source-reset baseline
+# bash/nighttime_driving/tent_divgate_continual.sh (H_THRESHOLD=1.6,
+# H_WARNING=1.4, CAUTIOUS_RST=0.01). Only the restoration TARGET differs.
 
-export OMP_NUM_THREADS=4
-export MKL_NUM_THREADS=4
-export OPENCV_NUM_THREADS=2
+# GPU Configuration
+GPU_ID=${GPU_ID:-3}
 
-GPU_ID=${GPU_ID:-0}
-
-DATASET=ACDCDataset
-DATA_DIR=".data/ACDC/"
+# Dataset Configuration
+DATASET=NighttimeDrivingDataset
+DATA_DIR="data/NighttimeDrivingTest/"
 INIT_RESIZE="1120 560"
-CONDITIONS="fog night rain snow"
-WORKERS=0
+CONDITIONS="night"
+WORKERS=1
 
+# Method Configuration
 METHOD="tent_divgate_smooth_anchor"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 
+# Hyperparameters (pure TENT loss, no top_k)
 BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# Defaults are 學長's original (1.8/1.5/0.005). For a FAIR comparison against
-# the source-reset baseline tent_divgate_continual (h_thr=1.6, h_warn=1.4,
-# cau_rst=0.01), run with: H_CEIL=1.6 H_FLOOR=1.4 RST=0.01 bash <this>.
-H_CEIL=${H_CEIL:-1.8}
-H_FLOOR=${H_FLOOR:-1.5}
-LAG_SCALE=${LAG_SCALE:-90.0}
-MAX_LAG=${MAX_LAG:-3000}
-RST=${RST:-0.005}
+# Smooth anchor (matched to source-reset baseline gate geometry)
+H_CEIL=${H_CEIL:-1.6}          # H_margin >= this -> no restore (was H_THRESHOLD)
+H_FLOOR=${H_FLOOR:-1.4}        # H_margin <= this -> restore to SOURCE (was H_WARNING)
+LAG_SCALE=${LAG_SCALE:-90.0}   # lag(H) = LAG_SCALE / (H - H_FLOOR)
+MAX_LAG=${MAX_LAG:-3000}       # deepest non-source anchor / snapshot buffer size
+RST=${RST:-0.01}               # fixed restore rate (was CAUTIOUS_RST)
 MONITOR_INTERVAL=50
 
-CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/smooth_anchor_default/}"
+CONTINUAL_ROUNDS=1200
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}/}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
                         --method $METHOD \
                         --ovss_type $OVSS_TYPE \
                         --ovss_backbone $OVSS_BACKBONE \
+                        \
                         --dataset $DATASET \
                         --data_dir $DATA_DIR \
                         --init_resize $INIT_RESIZE \
@@ -54,16 +51,19 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CONDITIONS \
                         --workers $WORKERS \
+                        \
                         --lr $LR \
                         --steps $STEPS \
                         --batch_size $BATCH_SIZE \
                         --continual_rounds $CONTINUAL_ROUNDS \
                         --seed 0 \
+                        \
                         --h_ceil $H_CEIL \
                         --h_floor $H_FLOOR \
                         --lag_scale $LAG_SCALE \
                         --max_lag $MAX_LAG \
                         --rst $RST \
                         --monitor_interval $MONITOR_INTERVAL \
+                        \
                         --save_dir $SAVE_DIR \
                         --class_extensions
