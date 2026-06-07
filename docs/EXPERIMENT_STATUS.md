@@ -800,4 +800,70 @@ Shorten / narrow the Cityscapes stream (e.g. weather-5 or a 406-matched subset) 
 
 ---
 
+## 16. Phase M: Smooth Anchor vs Source-Reset DivGate (2026-06-07)
+
+**Motivation.** Advisor suggested, at a meeting, that the diversity-gate's
+restoration should anchor to a *recent* model snapshot (smooth anchor) rather
+than hard-reset to the frozen source, because "elastic retreat proportional to
+instability" is easier to justify in a paper than "reset to pretrained."
+`tent_divgate_smooth_anchor` (merged from 學長's branch, see
+[merged_2026-06-04_inventory.md](merged_2026-06-04_inventory.md) §6) implements
+exactly this: restore toward a snapshot `lag(H)` batches ago, where
+`lag(H)=lag_scale/(H−h_floor)`; `H≥h_ceil`→no restore, `H≤h_floor`→source.
+
+### M-1: Head-to-head, matched gate geometry — smooth anchor LOSES on all 6 datasets
+To isolate the restoration TARGET (recent-anchor vs source), each smooth run was
+matched to its dataset's tuned source-reset baseline: `h_ceil←h_threshold`,
+`h_floor←h_warning`, `rst←cautious_rst`; LR/rounds/resize/patch identical. Means
+over the common horizon (some smooth runs still finishing — trend already past peak):
+
+| dataset | horizon | source-reset | smooth-anchor | Δ |
+|---|---|---|---|---|
+| **ACDC** | 150R | **31.59** (R150 31.34) | 29.53 (R150 27.41) | **−2.06** |
+| VOC20 (weather) | 100R | 59.33 | 55.01 | −4.32 |
+| Cityscapes (weather) | 90R | 19.77 | 15.66 | −4.11 |
+| Dark Zurich | 1200R | 22.92 | 21.83 | −1.09 |
+| Nighttime Driving | 1200R | 32.62 | 32.08 | −0.54 |
+| DZ+ND Combined | 600R | 27.08 | 27.05 | −0.02 |
+
+Gap is largest where there is headroom + the gate fires a lot (ACDC, VOC20,
+Cityscapes); near-tie on the night datasets. ACDC trajectory is the clearest:
+both peak ~33 @R20-30, then source-reset holds ~31 while smooth-anchor **decays
+steadily to ~27 by R150** — it cannot hold the gains.
+
+### M-2: Mechanistic root cause (from `entropy_log.csv` H_margin band)
+Smooth-anchor's H_margin drifts much LOWER than source-reset's (ACDC median
+**1.42 vs 1.75**) — i.e. the model collapses further toward a few dominant
+classes. Cause: in the active-restore band the recent snapshot is **itself
+already drifted**, so pulling toward it is a *weaker correction* than snapping to
+the clean source. The gate is NOT idle (smooth is 86% restore-active vs
+source-reset's ~99% aggressive) — it restores *more often* but toward a
+*contaminated target*, so drift accumulates. **Takeaway so far: source is the
+only clean anchor; recent snapshots are contaminated.**
+
+### M-3: Recovery sweep — RUNNING (ACDC 150R, GPU 0/1), launched 2026-06-07
+Testing whether hyperparameters recover the deficit (advisor/我 asked: can raising
+`h_ceil` help?). Launcher: `bash/ACDC_10_round/sweep_smooth_anchor.sh`. Configs
+(all rst=0.01): `A_ceil1.8`, `A_ceil2.0` (raise ceil = engage earlier);
+`B_lag300`, `B_lag1000` (raise lag_scale = deeper/cleaner anchor, →source in the
+limit); `C_ceil2.0_lag1000` (combo); `D_ceil1.8_floor1.55` (retreat-to-source
+sooner). **Prediction:** pure ceil-raise (A) unlikely to fix it (still pulls to
+contaminated target); deeper-anchor (B_lag1000 / C) most likely to approach
+31.59 — if C ties source-reset, smooth anchor keeps the nicer narrative without
+losing accuracy. Reference points: matched(1.6/1.4/90)=29.53, source-reset=31.59.
+
+### M-4: Tooling added this phase
+- `scripts/analyze_gate.py` — reads a run's `entropy_log.csv` (per-batch h_margin,
+  all methods) or `divgate_log.txt`, prints H_margin band + gate-activity + mean/R-last/peak.
+- `plot_smooth_vs_source.py` — trajectory grid + grouped-bar (→ `save/_compare/`).
+- `tent_divgate_smooth_anchor` runners for all 6 datasets (ACDC/v20/cityscapes_continual/
+  dark_zurich/nighttime_driving/dz_nd_combined), gate geometry env-overridable.
+
+> **Caveat:** this is the controlled (matched-geometry) comparison. A "best-config
+> vs best-config" comparison (each method tuned on the same grid) is the M-3 sweep's
+> job; equal tuning budget for both arms is the fairness rule (see discussion in
+> the per-method gate-threshold notes).
+
+---
+
 *End of research-arc document. For any detail not covered here, follow the reading map in §13.*
