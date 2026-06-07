@@ -12,7 +12,7 @@
 # Only the restoration TARGET differs vs the baseline.
 
 # ── GPU ────────────────────────────────────────────────────────────
-GPU_ID=${GPU_ID:-3}
+GPU_ID=${GPU_ID:-2}
 
 # ── Dataset ────────────────────────────────────────────────────────
 DATASET=CityscapesDataset
@@ -22,11 +22,10 @@ WORKERS=1
 
 # ── Corruption conditions (ImageNet-C standard order) ──────────────
 CORRUPTIONS_ARRAY=(
-    # --- weather ---
+    # ACDC-matched 4 corruptions: snow<->snow, fog<->fog, frost<->rain, contrast<->night
     snow
     frost
     fog
-    brightness
     contrast
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
@@ -67,6 +66,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
+                        --subset_size 101 --subset_seed 0 \
                         \
                         --lr $LR \
                         --steps $STEPS \
