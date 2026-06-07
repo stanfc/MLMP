@@ -242,14 +242,18 @@ env-overridable; `GPU_ID` defaults to 3.
 | Folder | DATASET | DATA_DIR | CONDITIONS | INIT_RESIZE | ROUNDS |
 |---|---|---|---|---|---|
 | `bash/ACDC_10_round/` | ACDCDataset | `data/ACDC/` | fog night rain snow | 1120 560 | 150 |
-| `bash/v20/` | PascalVOC20Dataset | `data/VOC/VOC2012/` | snow frost fog brightness contrast | 224 224 | 150 |
+| `bash/v20_acdc_matched/` | PascalVOC20Dataset | `data/VOC/VOC2012/` | snow frost fog contrast (ACDC-matched) | 224 224 | 150 |
 | `bash/cityscapes_continual/` | CityscapesDataset | `data/Cityscape/` | snow frost fog brightness contrast | 1120 560 | 150 |
 | `bash/dark_zurich/` | DarkZurichDataset | `data/Dark_Zurich_val_anon/` | night | 1120 560 | 1200 |
 | `bash/nighttime_driving/` | NighttimeDrivingDataset | `data/NighttimeDrivingTest/` | night | 1120 560 | 1200 |
 | `bash/dz_nd_combined/` | DZ_ND_Combined | `data/` (ignored) | dark_zurich nighttime_driving | 1120 560 | 600 |
 
-v20 uses the MLMP patch convention (`INIT_RESIZE 224 224`, patch 224 stride 112 → 1 patch/img).
-All scripts pass `--class_extensions`.
+The v20 runner lives in `bash/v20_acdc_matched/` (NOT plain `bash/v20/`): a deterministic
+101-img × 4-corruption = 404/round subset (`--ann_file val_subset_101_seed0.txt`, auto-generated
+via `scripts/make_voc_subset.py`) matching ACDC's 406/round for direct trajectory overlay; the 4
+corruptions map to ACDC conditions (snow↔snow, fog↔fog, frost↔rain, contrast↔night). It uses the
+MLMP patch convention (`INIT_RESIZE 224 224`, patch 224 stride 112 → 1 patch/img). All scripts pass
+`--class_extensions`.
 
 ---
 

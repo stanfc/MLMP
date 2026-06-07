@@ -1,10 +1,11 @@
 #!/bin/bash
-# SAR-MLMP-SmoothAnchor on PascalVOC20Dataset (CTTA, 150 rounds).
+# SAR-MLMP-SmoothAnchor on PascalVOC20 with ACDC-matched round size.
 # SAR (SAM + reliable filter) + full MLMP (multi-prompt/layer + UAML eval)
-# + smooth-anchor restoration. See docs/sar_mlmp_smooth_anchor_continual_spec.md.
+# + smooth-anchor restoration. See docs/sar_mlmp_smooth_anchor_continual_spec.md
+# and docs/v20_acdc_matched_spec.md.
 #
 # ─── Patch convention (DO NOT CHANGE) ───
-# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image (MLMP paper).
+# INIT_RESIZE 224x224 + patch 224x224 stride 112 → 1 patch/image.
 
 # ── GPU ────────────────────────────────────────────────────────────
 GPU_ID=${GPU_ID:-3}
@@ -15,12 +16,25 @@ DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
 WORKERS=1
 
-# ── Corruption conditions (ImageNet-C weather) ─────────────────────
+# ── ACDC-matched subset (101 × 4 = 404 ≈ ACDC's 406/round) ─────────
+IMAGES_PER_CORRUPTION=101
+SUBSET_SEED=0
+ANN_FILE="${DATA_DIR}ImageSets/Segmentation/val_subset_${IMAGES_PER_CORRUPTION}_seed${SUBSET_SEED}.txt"
+if [ ! -f "$ANN_FILE" ]; then
+    echo "+++ Subset file missing, generating: $ANN_FILE"
+    python scripts/make_voc_subset.py --n $IMAGES_PER_CORRUPTION --seed $SUBSET_SEED
+fi
+
+# ── Corruption conditions (4 closest to ACDC: snow/fog/frost/contrast) ──
+# Mapping rationale:
+#   snow     ↔ ACDC snow      (direct)
+#   fog      ↔ ACDC fog       (direct)
+#   frost    ↔ ACDC rain      (both wet/icy outdoor weather, surface coverage)
+#   contrast ↔ ACDC night     (low contrast ≈ poor visibility)
 CORRUPTIONS_ARRAY=(
     snow
     frost
     fog
-    brightness
     contrast
 )
 CORRUPTIONS_LIST="${CORRUPTIONS_LIST:-${CORRUPTIONS_ARRAY[*]}}"
@@ -38,24 +52,24 @@ LR=${LR:-0.000005}
 STEPS=1
 
 # ── MLMP / UAML ────────────────────────────────────────────────────
-ALPHA_CLS=${ALPHA_CLS:-0.0}
-UAML_IN_ADAPT=${UAML_IN_ADAPT:-1}
+ALPHA_CLS=${ALPHA_CLS:-0.0}        # ILE weight (>0 enables CLS-entropy term)
+UAML_IN_ADAPT=${UAML_IN_ADAPT:-1}  # 1: multi-layer adapt; 0: single-layer adapt (eval still multi-layer)
 
 # ── SAR ────────────────────────────────────────────────────────────
-E_MARGIN=${E_MARGIN:-1.8}
-SAM_RHO=${SAM_RHO:-0.05}
+E_MARGIN=${E_MARGIN:-1.8}          # sample-level mean-pixel entropy threshold
+SAM_RHO=${SAM_RHO:-0.05}           # SAM perturbation radius
 
 # ── SmoothAnchor (adapt-time ensemble H ~3.0 healthy) ──────────────
-H_CEIL=${H_CEIL:-2.9}
-H_FLOOR=${H_FLOOR:-2.2}
-LAG_SCALE=${LAG_SCALE:-150.0}
-MAX_LAG=${MAX_LAG:-3000}
-RST=${RST:-0.005}
+H_CEIL=${H_CEIL:-2.9}              # H >= this -> no restore
+H_FLOOR=${H_FLOOR:-2.2}            # H <= this -> restore to SOURCE
+LAG_SCALE=${LAG_SCALE:-150.0}      # lag(H) = LAG_SCALE / (H - H_FLOOR)
+MAX_LAG=${MAX_LAG:-3000}           # deepest non-source anchor / snapshot buffer size
+RST=${RST:-0.005}                  # fixed restore rate
 MONITOR_INTERVAL=50
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
-SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_weather/}"
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/v20_acdc_matched/${METHOD}/}"
 
 # ───────────────────────────────────────────────────────────────────
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
@@ -71,6 +85,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_size 224 224 \
                         --patch_stride 112 \
                         --corruptions_list $CORRUPTIONS_LIST \
+                        --ann_file $ANN_FILE \
                         --workers $WORKERS \
                         \
                         --lr $LR \
