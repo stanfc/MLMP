@@ -599,6 +599,12 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--rst', type=float, default=0.005,
                             help='Fixed restoration rate when restore is active.')
         parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--marginal_buf_size', type=int, default=None,
+                            help='Decouple H_margin averaging window from lag-update '
+                                 'cadence. None -> coupled (H over a fresh '
+                                 'monitor_interval window). If set, H is a rolling mean '
+                                 'over the last marginal_buf_size batches while lag still '
+                                 'refreshes every monitor_interval batches.')
 
     elif method == 'tent_contgate_continual':
         parser.add_argument('--h_high', type=float, default=1.8,

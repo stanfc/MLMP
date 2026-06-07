@@ -16,7 +16,7 @@ export OPENCV_NUM_THREADS=2
 GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
-DATA_DIR=".data/ACDC/"
+DATA_DIR="data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 WORKERS=1
@@ -37,7 +37,9 @@ H_FLOOR=${H_FLOOR:-1.5}
 LAG_SCALE=${LAG_SCALE:-90.0}
 MAX_LAG=${MAX_LAG:-3000}
 RST=${RST:-0.005}
-MONITOR_INTERVAL=50
+MONITOR_INTERVAL=${MONITOR_INTERVAL:-50}
+# Optional: decouple H-averaging window from lag-update cadence. Empty = coupled.
+MARGINAL_BUF_SIZE=${MARGINAL_BUF_SIZE:-}
 
 CONTINUAL_ROUNDS=150
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/smooth_anchor_default/}"
@@ -65,5 +67,6 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --max_lag $MAX_LAG \
                         --rst $RST \
                         --monitor_interval $MONITOR_INTERVAL \
+                        ${MARGINAL_BUF_SIZE:+--marginal_buf_size $MARGINAL_BUF_SIZE} \
                         --save_dir $SAVE_DIR \
                         --class_extensions

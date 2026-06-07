@@ -59,6 +59,7 @@ class TENTDivGateSmoothAnchor:
                  max_lag=3000,
                  rst=0.005,
                  monitor_interval=50,
+                 marginal_buf_size=None,
                  prompt_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
@@ -82,6 +83,15 @@ class TENTDivGateSmoothAnchor:
         self.monitor_interval = int(monitor_interval)
         if self.monitor_interval < 1:
             raise ValueError(f"monitor_interval must be >= 1, got {self.monitor_interval}")
+        # marginal_buf_size DECOUPLES the H_margin averaging window from the
+        # lag-update cadence (monitor_interval). None -> coupled legacy behaviour
+        # (H averaged over a fresh, non-overlapping monitor_interval-batch window,
+        # cleared after each update). If set, H is a rolling mean over the last
+        # marginal_buf_size batches and the buffer is NOT cleared, so lag can be
+        # refreshed every monitor_interval batches without shrinking the H window.
+        self.marginal_buf_size = int(marginal_buf_size) if marginal_buf_size else None
+        if self.marginal_buf_size is not None and self.marginal_buf_size < 1:
+            raise ValueError(f"marginal_buf_size must be >= 1, got {self.marginal_buf_size}")
 
         self.runtime = runtime_calculation
         self.device = device
@@ -111,7 +121,8 @@ class TENTDivGateSmoothAnchor:
         print_clip_parameters(self.model)
         print(f"+++ TENT-DivGate-SmoothAnchor: h_ceil={self.h_ceil}, h_floor={self.h_floor}, "
               f"lag_scale={self.lag_scale}, max_lag={self.max_lag}, rst={self.rst}, "
-              f"monitor_interval={self.monitor_interval}")
+              f"monitor_interval={self.monitor_interval}, "
+              f"marginal_buf_size={self.marginal_buf_size or 'coupled(=monitor_interval)'}")
         print(f"+++ lag(H) = {self.lag_scale} / (H - {self.h_floor})  "
               f"clamped to [1, {self.max_lag}]; H>={self.h_ceil} -> no restore; "
               f"H<={self.h_floor} -> source")
@@ -146,7 +157,9 @@ class TENTDivGateSmoothAnchor:
                 self.classes, self.prompt_templates, average=False).squeeze()
 
         # ---------- Gate state ----------
-        self.marginal_buf = []
+        # Decoupled mode: rolling window of fixed size; coupled mode: plain list.
+        self.marginal_buf = (deque(maxlen=self.marginal_buf_size)
+                             if self.marginal_buf_size else [])
         self.batch_count = 0
         self.total_batches = 0
 
@@ -266,7 +279,7 @@ class TENTDivGateSmoothAnchor:
         if len(self.marginal_buf) == 0:
             self.batch_count = 0
             return
-        agg = torch.stack(self.marginal_buf, dim=0).mean(dim=0)
+        agg = torch.stack(list(self.marginal_buf), dim=0).mean(dim=0)
         agg = agg / agg.sum().clamp(min=1e-8)
         h_margin = -(agg * agg.clamp(min=1e-12).log()).sum().item()
 
@@ -303,7 +316,10 @@ class TENTDivGateSmoothAnchor:
         self.current_lag = new_lag
         self.current_rst = new_rst
 
-        self.marginal_buf.clear()
+        # Coupled mode: clear so the next H uses a fresh non-overlapping window.
+        # Decoupled mode: keep the rolling window (maxlen handles eviction).
+        if self.marginal_buf_size is None:
+            self.marginal_buf.clear()
         self.batch_count = 0
 
     # ===========================================================
