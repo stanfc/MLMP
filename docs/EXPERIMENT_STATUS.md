@@ -928,4 +928,89 @@ ACDC 30.05 (below tent-divgate 31.59). **Do NOT transplant the tent D numbers
 
 ---
 
+## 17. Phase N: SAR-MLMP-SmoothAnchor — full results, gate diagnosis, ceil/floor sweep (2026-06-09)
+
+Method: `adapt/sar_mlmp_smooth_anchor_continual.py` (spec
+`docs/sar_mlmp_smooth_anchor_continual_spec.md`). SAR (reliable sample+pixel
+filter + SAM two-step) + **full MLMP** (7 prompts, 18-layer UAML: `mean` fusion in
+adapt, `adaptive_weighted_mean` in eval) + **smooth-anchor** restore
+(`lag(H)=lag_scale/(H−floor)`, fp16-CPU snapshot deque; H≥ceil→no restore,
+H≤floor→source). SAR hard recovery dropped. Flags `--uaml_in_adapt` (default 1),
+`--alpha_cls` (ILE, default 0). LR 5e-6. Baseline geom: ceil2.9 floor2.2 lag150
+rst0.005 monitor50 e_margin1.8 sam_rho0.05.
+
+### N-1: Baseline results, 150 rounds (target = beat MLMP-episodic)
+
+| Dataset (round size) | R1 | Peak@R | R150 | mean-all | **episodic** | verdict | dir |
+|---|---|---|---|---|---|---|---|
+| Cityscapes (404: 101×snow/frost/fog/contrast) | 19.86 | 20.64@70 | 20.46 | **20.42** | 20.00 | **BEATS ✅** | `save/CityscapesDataset/sar_mlmp_smooth_anchor_continual_weather/` |
+| ACDC (406: fog/night/rain/snow) | 29.73 | 30.16@122 | 30.05 | 30.05 | 30.6 (step10; 29.84 step1) | below ❌ | `save/ACDCDataset/sar_mlmp_smooth_anchor_continual/` |
+| V20 (404: 101×snow/frost/fog/contrast) | 74.07 | 77.67@36 | 73.98 | 75.63 | 76.21 | below ❌ (peak>epi, drifts) | `save/PascalVOC20Dataset/v20_acdc_matched/sar_mlmp_smooth_anchor_continual/` |
+
+Stable on all three (no collapse to 150R). Headline: **most stable high performer**;
+on V20 it is the **best continual method** (next best MLMP-DivGate 71.81) and peak
+(77.67) > episodic, but drifts down. Figures: `acdc_sar_mlmp_round_miou.png`,
+`v20_acdc_matched_sar_mlmp_round_miou.png`, `cityscapes_acdc_matched_round_miou.png`.
+Analysis scripts: `scripts/analyze_acdc_v20_sar_mlmp.py`, `scripts/analyze_cityscapes_acdc_matched.py`.
+
+### N-2: GATE DIAGNOSIS (`gate_log.csv`) — the two failures have OPPOSITE causes
+
+| Dataset | H_margin range (mean) | gate OFF / active-lag / SOURCE | mean active lag |
+|---|---|---|---|
+| ACDC | 2.23–2.50 (2.29) | **0% / 89% / 11%** | **~1730 back** |
+| V20 | 2.14–3.11 (2.71) | **34% / 65% / 1%** | 528 |
+| Cityscapes | 2.22–2.55 (2.32) | 0% / 93% / 7% | 1373 |
+
+- **ACDC is PINNED, not drifting**: gate active 89% restoring toward ~1730-batch-old
+  (near-source) anchors → clamped at its UAML starting point (R1 29.73 ≈ plateau
+  30.05), never climbs the +0.6 it needs. **Fix = LOOSEN** (lower ceil into its
+  2.3–2.5 band so healthy windows go OFF / lower floor → shallow recent anchor /
+  smaller rst).
+- **V20 DRIFTS off the R36 peak**: gate OFF 34% (H often ≥ ceil 2.9, up to 3.11) → no
+  anchor holds the peak. **Fix = RAISE ceil** so the gate stays engaged (+ floor↑ for
+  source pulls on dips). (Matches user's own finding: ceil↑ helps, floor↑ → easier
+  source retreat.)
+- **Cityscapes has the SAME H-regime + gate behavior as ACDC** — it only "wins"
+  because its episodic bound (20.0) is low. Gate is not the differentiator there;
+  headroom is. So the metric "beat episodic" depends jointly on gate working-point
+  AND the absolute margin to the (dataset-specific) episodic number.
+- ACDC and V20 want **opposite gate tightness** → a single config beating all three
+  is not guaranteed; aiming for a robust middle region.
+- SAR reliable-filter pass rate: ACDC 100%, Cityscapes 100%, V20 93% (e_margin=1.8 is
+  not starving adaptation — confirmed via `sar_log.txt`).
+
+### N-3: ceil/floor/lag/rst sweep — RUNNING (16 configs, 150R, launched 2026-06-09)
+
+Launcher `bash/sweep_sar_mlmp_ceil_floor.sh` (env-overrides the two runners; packed
+GPUs 0–3, cv2 thread-capped, staggered). Logs `save/_sweep_logs/`. Save dirs
+`save/{ACDCDataset|PascalVOC20Dataset/v20_acdc_matched}/smlp_c<ceil>_f<floor>_l<lag>_r<rst>/`.
+
+- **ACDC ×8 (loosen to climb; target >30.6)**: c2.4_f2.2_l150_r0.005,
+  c2.5_f2.2_l150_r0.005, c2.9_f1.9_l150_r0.005, c2.9_f2.0_l100_r0.005,
+  c2.9_f2.2_l150_r0.002, c2.4_f1.9_l100_r0.003, c2.9_f2.4_l150_r0.005 (floor↑ test),
+  c2.6_f2.4_l150_r0.008 (ceil↑+floor↑ test).
+- **V20 ×8 (tighten/hold peak; target >76.2)**: c3.2_f2.2_l150_r0.005,
+  c3.4_f2.2_l150_r0.005, c3.2_f2.4_l150_r0.005, c3.2_f2.2_l150_r0.01,
+  c3.4_f2.6_l150_r0.01, c3.2_f2.5_l100_r0.005, c2.9_f2.5_l150_r0.005 (floor↑ only),
+  c3.4_f2.2_l300_r0.005 (deep anchor).
+- All 16 verified started cleanly (env overrides applied, no crashes). **Collect when
+  done**: rank by mean-all vs episodic (ACDC 30.6, V20 76.2); check if any single
+  config clears all three. Quick rank: `awk -F, '/^Round/{s+=$NF;n++}END{print s/n}'`
+  over each `smlp_*/results_all_rounds.txt`.
+
+### N-4: Infra notes
+- **OpenCV thread saturation fix** (needed for many concurrent jobs): added
+  `cv2.setNumThreads(OPENCV_NUM_THREADS, default 2)` at top of `main.py` +
+  `main_continual.py` (forked DataLoader workers otherwise each spawn ~256 OpenCV
+  threads → exhaust `ulimit -u`=8192 → "Can't spawn new thread res=11" kills workers).
+  **Uncommitted** (left out of git to avoid entangling user's concurrent edits).
+- `bash/cityscapes_continual/` all 11 method scripts aligned to ACDC-matched
+  (4-corr snow/frost/fog/contrast + `--subset_size 101` = 404/round), GPU_ID default
+  2. Parallel driver `run_all_parallel.sh`; sequential `run_all_acdc_matched.sh`.
+- Cityscapes full method comparison (404/round, 150R): sar_mlmp 20.42 (best,
+  >episodic) > MLMP-DivGate 19.65 > No-Adapt 18.47; naive TENT/MLMP/SAR-continual
+  collapsed (R150 1.33 / 0.16 / 9.37). CoTTA was still running at writing.
+
+---
+
 *End of research-arc document. For any detail not covered here, follow the reading map in §13.*
