@@ -841,16 +841,46 @@ source-reset's ~99% aggressive) — it restores *more often* but toward a
 *contaminated target*, so drift accumulates. **Takeaway so far: source is the
 only clean anchor; recent snapshots are contaminated.**
 
-### M-3: Recovery sweep — RUNNING (ACDC 150R, GPU 0/1), launched 2026-06-07
-Testing whether hyperparameters recover the deficit (advisor/我 asked: can raising
-`h_ceil` help?). Launcher: `bash/ACDC_10_round/sweep_smooth_anchor.sh`. Configs
-(all rst=0.01): `A_ceil1.8`, `A_ceil2.0` (raise ceil = engage earlier);
-`B_lag300`, `B_lag1000` (raise lag_scale = deeper/cleaner anchor, →source in the
-limit); `C_ceil2.0_lag1000` (combo); `D_ceil1.8_floor1.55` (retreat-to-source
-sooner). **Prediction:** pure ceil-raise (A) unlikely to fix it (still pulls to
-contaminated target); deeper-anchor (B_lag1000 / C) most likely to approach
-31.59 — if C ties source-reset, smooth anchor keeps the nicer narrative without
-losing accuracy. Reference points: matched(1.6/1.4/90)=29.53, source-reset=31.59.
+### M-3: Recovery sweep — DONE (ACDC 150R, 2026-06-07). **Smooth anchor CAN beat source-reset.**
+Launcher `bash/ACDC_10_round/sweep_smooth_anchor.sh` (results in
+`save/ACDCDataset/smooth_sweep_*/`). All-round mean / R150 mIoU, vs references
+matched(ceil1.6/floor1.4/lag90)=29.53 and **source-reset=31.59 (R150 31.34)**:
+
+| config | mean | R150 | H_margin median | takeaway |
+|---|---|---|---|---|
+| **D: ceil1.8, floor1.55, lag90** | **32.27** | **32.74** | 1.505 | **BEATS source-reset (+0.68)** |
+| C: ceil2.0, lag1000 | 31.70 | 32.13 | 1.675 | ties/beats source |
+| B: lag1000 | 31.59 | 31.34 | 1.546 | **identical to source-reset** (deep lag → source) |
+| A: ceil2.0 | 31.27 | 29.48 | 1.470 | mean↑ but still late-decays |
+| A: ceil1.8 | 30.96 | 28.98 | — | partial |
+| B: lag300 | 30.67 | 29.79 | — | medium depth |
+| win: mon25 (coupled) | 30.48 | 30.57 | — | window: marginal |
+| decoup buf50/mon10, mon5 | 29.50 | 27.4 | **1.418 (=matched)** | window: **no effect** |
+| matched (ref) | 29.53 | 27.41 | 1.419 | the losing config |
+
+**Verdict on the three hypotheses:**
+1. **Raise h_ceil alone (A)** — partial: lifts mean (29.5→31.3) but R150 still
+   decays to ~29 (still anchors to contaminated recent snapshots). NOT the fix.
+2. **Update-window / decouple (win_*, decoup_*)** — essentially **no effect**;
+   `decoup` has a bit-identical H_margin band to matched (1.418 vs 1.419). The
+   failure is anchor *contamination/depth*, not lag-update cadence. Refutes the
+   "finer update window helps" idea.
+3. **Retreat-to-source sooner / deeper anchor (D, C, B_lag1000)** — THE lever.
+   `B_lag1000` literally reproduces source-reset (deep lag → source fallback).
+   **`D` (raise h_floor 1.4→1.55) WINS: 32.27 > 31.59**, because it hard-retreats
+   to clean source whenever H<1.55 (64.5% of batches) yet still smooth-anchors to
+   recent snapshots in the healthy 1.55–1.8 band — a hybrid that beats *both*
+   pure source-reset and matched-smooth. Higher H_margin median tracks higher
+   mIoU across the whole sweep.
+
+**Paper takeaway:** the advisor's smooth-anchor narrative is salvageable AND
+numerically superior — but the winning recipe is "smooth recent anchor when
+mildly drifting + retreat to clean source when unhealthy (high floor)", not the
+naive matched-geometry smooth anchor. Source remains the only clean anchor;
+the win comes from *reaching it sooner* while keeping smooth dynamics on top.
+Figures: `save/_compare/smooth_sweep_{bars,trajectories}.{png,svg}`.
+**Next:** validate D on the other datasets (currently only ACDC swept); a small
+symmetric floor/lag sweep on VOC20 + the night datasets would confirm generality.
 
 ### M-4: Tooling added this phase
 - `scripts/analyze_gate.py` — reads a run's `entropy_log.csv` (per-batch h_margin,
