@@ -60,6 +60,10 @@ MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
 CAUTIOUS_RST=0.01
 BRAKE_RST=0.05
 
+# Optional deterministic image subset (fast turnaround). Empty = full val.
+SUBSET_SIZE=${SUBSET_SIZE:-}
+SUBSET_SEED=${SUBSET_SEED:-0}
+
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_threshold_${H_THRESHOLD}_weather/}"
@@ -78,6 +82,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
+                        ${SUBSET_SIZE:+--subset_size $SUBSET_SIZE --subset_seed $SUBSET_SEED} \
                         \
                         --lr $LR \
                         --steps $STEPS \

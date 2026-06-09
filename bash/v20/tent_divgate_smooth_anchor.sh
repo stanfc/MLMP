@@ -53,6 +53,10 @@ MAX_LAG=${MAX_LAG:-3000}       # deepest non-source anchor / snapshot buffer siz
 RST=${RST:-0.01}               # fixed restore rate (was CAUTIOUS_RST)
 MONITOR_INTERVAL=50
 
+# Optional deterministic image subset (fast turnaround). Empty = full val.
+SUBSET_SIZE=${SUBSET_SIZE:-}
+SUBSET_SEED=${SUBSET_SEED:-0}
+
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150
 SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_ceil${H_CEIL}_floor${H_FLOOR}_weather/}"
@@ -71,6 +75,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CORRUPTIONS_LIST \
                         --workers $WORKERS \
+                        ${SUBSET_SIZE:+--subset_size $SUBSET_SIZE --subset_seed $SUBSET_SEED} \
                         \
                         --lr $LR \
                         --steps $STEPS \
