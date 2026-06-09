@@ -879,8 +879,40 @@ mildly drifting + retreat to clean source when unhealthy (high floor)", not the
 naive matched-geometry smooth anchor. Source remains the only clean anchor;
 the win comes from *reaching it sooner* while keeping smooth dynamics on top.
 Figures: `save/_compare/smooth_sweep_{bars,trajectories}.{png,svg}`.
-**Next:** validate D on the other datasets (currently only ACDC swept); a small
-symmetric floor/lag sweep on VOC20 + the night datasets would confirm generality.
+
+### M-4b: Report figure set (`plot_smooth_report.py` → `save/_compare/report_*`)
+Six presentation-ready panels: `A_headline_bars` (D beats source-reset, matched
+loses), `B_trajectories` (D holds vs matched decays), `C_hmargin_violin`
+(matched H-collapse vs source/D healthy), `D_hmargin_vs_miou` (sweet spot, not
+monotone), `E_gate_regions` (D retreats to source 72% vs matched 54%; sar_mlmp
+100% restore-active), `F_lag_curve` (mechanism). Speaker-notes were drafted in
+chat (lead with A+E if only 2 slides).
+
+### M-5: Generality test on VOC20 + Cityscapes — RUNNING (2026-06-07/08)
+**Key calibration lesson:** the gate thresholds are on the *dataset's H_margin
+scale*, which differs (ACDC source-reset median ≈1.75, **VOC20 ≈2.06,
+Cityscapes ≈2.19**). So D's absolute 1.55/1.8 must NOT be copied — instead apply
+the *principle* (floor ≈ median−0.2, ceil just above) on each dataset's own band.
+Floor mini-sweeps launched (weather + subset for fast turnaround; matched
+source-reset baselines at the same config):
+- **VOC20** (5-corr weather, subset 101): ceil2.3 × floor{1.8,2.0,2.2}, lag90,
+  rst0.01. Baseline `tent_divgate_continual_sub101_weather` (subset-matched, NOT
+  the old full-val 59.24). Dirs: `save/PascalVOC20Dataset/tdsa_Dtune_sub101_*`.
+- **Cityscapes** (4-corr weather, subset 101): ceil2.4 × floor{1.9,2.1,2.3}.
+  Baseline `tent_divgate_continual_weather_threshold_2.0` (4-corr+101, mean
+  18.41). Dirs: `save/CityscapesDataset/tent_divgate_smooth_anchor_Dtune_city_*`.
+- Runner change: `SUBSET_SIZE` env added to `bash/v20/tent_divgate_{continual,
+  smooth_anchor}.sh`. Analyse with `scripts/analyze_gate.py` once complete.
+
+### M-6: SAR-MLMP-SmoothAnchor (`adapt/sar_mlmp_smooth_anchor_continual.py`)
+A user-built combo (SAR reliable-filter + SAM + full MLMP UAML eval + smooth
+anchor). Uses ceil2.9/floor2.2/lag150 — calibrated to **MLMP's higher H_margin
+band (~2.0–2.5)**, not TENT's. Already sits in the winning regime (floor just
+above its own median → 70–86% source-retreat, same principle as D). Cityscapes
+weather mean 20.42 (beats tent source-reset ~19.8 — notable on a hard negative);
+ACDC 30.05 (below tent-divgate 31.59). **Do NOT transplant the tent D numbers
+(1.55/1.8) here — different H scale.** For a fair claim it needs a same-machinery
+(MLMP+SAR) source-reset baseline, not a comparison to the TENT champion.
 
 ### M-4: Tooling added this phase
 - `scripts/analyze_gate.py` — reads a run's `entropy_log.csv` (per-batch h_margin,
