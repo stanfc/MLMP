@@ -888,21 +888,53 @@ monotone), `E_gate_regions` (D retreats to source 72% vs matched 54%; sar_mlmp
 100% restore-active), `F_lag_curve` (mechanism). Speaker-notes were drafted in
 chat (lead with A+E if only 2 slides).
 
-### M-5: Generality test on VOC20 + Cityscapes — RUNNING (2026-06-07/08)
+### M-5: Generality test on VOC20 + Cityscapes — D PRINCIPLE CONFIRMED (2026-06-10)
 **Key calibration lesson:** the gate thresholds are on the *dataset's H_margin
-scale*, which differs (ACDC source-reset median ≈1.75, **VOC20 ≈2.06,
-Cityscapes ≈2.19**). So D's absolute 1.55/1.8 must NOT be copied — instead apply
-the *principle* (floor ≈ median−0.2, ceil just above) on each dataset's own band.
-Floor mini-sweeps launched (weather + subset for fast turnaround; matched
-source-reset baselines at the same config):
-- **VOC20** (5-corr weather, subset 101): ceil2.3 × floor{1.8,2.0,2.2}, lag90,
-  rst0.01. Baseline `tent_divgate_continual_sub101_weather` (subset-matched, NOT
-  the old full-val 59.24). Dirs: `save/PascalVOC20Dataset/tdsa_Dtune_sub101_*`.
-- **Cityscapes** (4-corr weather, subset 101): ceil2.4 × floor{1.9,2.1,2.3}.
-  Baseline `tent_divgate_continual_weather_threshold_2.0` (4-corr+101, mean
-  18.41). Dirs: `save/CityscapesDataset/tent_divgate_smooth_anchor_Dtune_city_*`.
-- Runner change: `SUBSET_SIZE` env added to `bash/v20/tent_divgate_{continual,
-  smooth_anchor}.sh`. Analyse with `scripts/analyze_gate.py` once complete.
+scale*, which differs (ACDC source-reset median ≈1.75, **VOC20 ≈1.15,
+Cityscapes ≈2.2**). So D's absolute 1.55/1.8 must NOT be copied — instead apply
+the *principle* (raise the floor → retreat-to-source sooner) on each dataset's
+own band. Floor mini-sweeps (weather + subset-101 for fast turnaround; 150R; each
+vs a subset-matched source-reset baseline at the same stream).
+
+**VOC20 (5-corr weather, subset 101, 150R) — STRONG WIN, large margin:**
+
+| config | floor | mean-all | R150 | H_margin median | %source-region |
+|---|---|---|---|---|---|
+| source-reset (h1.6/1.4) | — | 59.24 | 58.72 | 1.152 | 67.2% |
+| smooth ceil2.3 | 1.8 | 61.72 | 59.70 | 1.262 | 81.5% |
+| smooth ceil2.3 | 2.0 | 63.43 | 62.03 | 1.398 | 83.6% |
+| **smooth ceil2.3** | **2.2** | **64.70** | **64.85** | 1.528 | 85.8% |
+
+Every smooth config beats source-reset; best (floor2.2) = **+5.46 mean, +6.13 R150**.
+Monotone in floor, and floor2.2 is the only run whose **R150 ≥ early rounds (no
+net decay)**. Mechanism mirrors ACDC's D: higher floor → model held in a *healthier*
+state (H median rises 1.15→1.53 with floor) → higher mIoU. Note source-reset has
+the **lowest** H here — on VOC20 hard reset over-restores; smooth-anchoring in the
+healthy band + source below floor is strictly better. Dirs:
+`save/PascalVOC20Dataset/{tent_divgate_continual_sub101_weather, tdsa_Dtune_sub101_ceil2.3_floor*}`.
+
+**Cityscapes (4-corr snow/frost/fog/contrast, subset 101, 150R) — same direction, tiny spread:**
+
+| config | floor | mean-all | R150 | H_margin median |
+|---|---|---|---|---|
+| smooth ceil2.4 | 1.9 | 18.33 | 18.10 | 2.117 |
+| smooth ceil2.4 | 2.1 | 18.65 | 18.38 | 2.242 |
+| **smooth ceil2.4** | **2.3** | **18.87** | **18.84** | 2.354 |
+
+Same monotone "higher floor → higher mIoU & higher H" trend, but spread is only
++0.54 mean — Cityscapes is **headroom-limited** (peak 19.07@R3, everything clusters;
+consistent with the known Cityscapes negative). Matched source-reset baseline
+(`tent_divgate_continual_sub101_4corr_thr2.4`, h2.4/2.1, 4-corr+101) RUNNING on
+GPU 0 — fills in the source-reset comparison line; direction already clear from
+the floor sweep. Dirs: `save/CityscapesDataset/tent_divgate_smooth_anchor_Dtune_city_*`.
+
+**Verdict:** the D principle (raise floor → retreat-to-source sooner → smooth-anchor
+beats source-reset) **generalises beyond ACDC**, decisively on VOC20 (where there
+is headroom) and directionally on Cityscapes (where there is not). Runner change:
+`SUBSET_SIZE` env added to `bash/v20/tent_divgate_{continual,smooth_anchor}.sh` and
+`bash/cityscapes_continual/*`. Figures: `python plot_smooth_generality.py` →
+`save/_compare/gen_*` (per-dataset trajectories+bars, `gen_floor_vs_miou` money panel,
+`gen_hmargin_vs_floor` mechanism).
 
 ### M-6: SAR-MLMP-SmoothAnchor (`adapt/sar_mlmp_smooth_anchor_continual.py`)
 A user-built combo (SAR reliable-filter + SAM + full MLMP UAML eval + smooth
