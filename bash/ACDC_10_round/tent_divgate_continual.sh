@@ -12,7 +12,7 @@ GPU_ID=${GPU_ID:-3}
 
 # Dataset Configuration
 DATASET=ACDCDataset
-DATA_DIR=".data/ACDC/"
+DATA_DIR="${DATA_DIR:-data/ACDC/}"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 WORKERS=1
@@ -27,16 +27,16 @@ BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# Diversity gate (proposal_after_cma.md §2.3 defaults)
-H_THRESHOLD=1.8       # H_margin >= this  -> aggressive (rst=0)
-H_WARNING=1.5         # h_warning <= H < h_threshold -> cautious
-MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
-CAUTIOUS_RST=0.005
-BRAKE_RST=0.02
+# Diversity gate (proposal_after_cma.md §2.3 defaults; all env-overridable)
+H_THRESHOLD=${H_THRESHOLD:-1.8}   # H_margin >= this  -> aggressive (rst=0)
+H_WARNING=${H_WARNING:-1.5}       # h_warning <= H < h_threshold -> cautious
+MONITOR_INTERVAL=${MONITOR_INTERVAL:-50}   # batches between H_margin re-evaluations
+CAUTIOUS_RST=${CAUTIOUS_RST:-0.005}
+BRAKE_RST=${BRAKE_RST:-0.02}
 
 
-CONTINUAL_ROUNDS=150
-SAVE_DIR="save/${DATASET}/${METHOD}_caut_0.005_brake_0.02/"
+CONTINUAL_ROUNDS=${CONTINUAL_ROUNDS:-150}
+SAVE_DIR="${SAVE_DIR:-save/${DATASET}/${METHOD}_caut_0.005_brake_0.02/}"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
