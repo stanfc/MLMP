@@ -36,11 +36,11 @@ LR=0.00001
 STEPS=1
 
 # ── Diversity gate (best confirmed from ACDC sweeps) ───────────────
-H_THRESHOLD=2.0       # H_margin >= this        -> aggressive (rst=0)
-H_WARNING=1.4         # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
-MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
-CAUTIOUS_RST=0.01
-BRAKE_RST=0.05
+H_THRESHOLD=${H_THRESHOLD:-2.0}   # H_margin >= this        -> aggressive (rst=0)
+H_WARNING=${H_WARNING:-1.4}       # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
+MONITOR_INTERVAL=${MONITOR_INTERVAL:-50}   # batches between H_margin re-evaluations
+CAUTIOUS_RST=${CAUTIOUS_RST:-0.01}
+BRAKE_RST=${BRAKE_RST:-0.05}
 
 # ── Experiment ─────────────────────────────────────────────────────
 CONTINUAL_ROUNDS=150

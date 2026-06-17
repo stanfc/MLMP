@@ -53,12 +53,12 @@ BATCH_SIZE=1
 LR=0.00001
 STEPS=1
 
-# ── Diversity gate (ACDC-best confirmed) ───────────────────────────
-H_THRESHOLD=1.6       # H_margin >= this        -> aggressive (rst=0)
-H_WARNING=1.4         # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
-MONITOR_INTERVAL=50   # batches between H_margin re-evaluations
-CAUTIOUS_RST=0.01
-BRAKE_RST=0.05
+# ── Diversity gate (ACDC-best confirmed; all env-overridable) ──────
+H_THRESHOLD=${H_THRESHOLD:-1.6}   # H_margin >= this        -> aggressive (rst=0)
+H_WARNING=${H_WARNING:-1.4}       # h_warning <= H < h_thr  -> cautious; < h_warning -> brake
+MONITOR_INTERVAL=${MONITOR_INTERVAL:-50}   # batches between H_margin re-evaluations
+CAUTIOUS_RST=${CAUTIOUS_RST:-0.01}
+BRAKE_RST=${BRAKE_RST:-0.05}
 
 # Optional deterministic image subset (fast turnaround). Empty = full val.
 SUBSET_SIZE=${SUBSET_SIZE:-}

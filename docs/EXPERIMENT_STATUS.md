@@ -936,6 +936,37 @@ is headroom) and directionally on Cityscapes (where there is not). Runner change
 `save/_compare/gen_*` (per-dataset trajectories+bars, `gen_floor_vs_miou` money panel,
 `gen_hmargin_vs_floor` mechanism).
 
+### M-5b: CONFOUND CONTROL — smooth-anchor does NOT beat a *tuned* source-reset (2026-06-10) ⚠️
+The M-5 VOC20 "win" compared smooth against a **badly-tuned** source-reset baseline
+(h1.6/1.4, set for ACDC's H band ≈1.75, but VOC20's median is only ≈1.15 → that gate
+barely sat where it should). The monotone "higher floor → better" trend really said
+"this gate restores to source more / in a better band" — which a *source-reset* can
+do too. Control: re-ran source-reset on VOC20 (subset-101, weather-5, 150R) at raised
+thresholds, incl. one whose gate geometry is **identical** to the winning smooth
+(ceil2.3/floor2.2, rst0.01) so the ONLY difference is the restoration **target**:
+
+| config | h_thr/h_warn | rst | mean | R150 |
+|---|---|---|---|---|
+| source-reset orig (mis-tuned) | 1.6/1.4 | 0.01/0.05 | 59.24 | 58.72 |
+| source-reset t2.0 | 2.0/1.8 | 0.01/0.01 | 62.71 | 61.43 |
+| **source-reset MATCH (= smooth geom)** | **2.3/2.2** | **0.01/0.01** | **64.62** | **64.61** |
+| **source-reset t2.5+brake (best)** | **2.5/2.2** | **0.01/0.05** | **65.92** | **65.21** |
+| smooth-anchor floor2.2 | ceil2.3/floor2.2 | 0.01 | 64.70 | 64.85 |
+
+**Conclusion:** gate-matched source-reset (64.62) **TIES** smooth-anchor (64.70) — the
+recent-snapshot target adds **nothing** (+0.08, within determinism). A *tuned* pure
+source-reset (t2.5+brake, 65.92) **BEATS** smooth by +1.22. So the lever is **WHERE
+the gate bands sit + how hard you reset** (tune to the dataset's H scale), NOT the
+smooth-anchor target. The earlier +5.46 "win" was an artifact of an untuned baseline.
+**Implication for the ACDC D-win (M-3, 32.27 vs 31.59): likely the same confound** —
+that source-reset baseline (h1.6/1.4) is below ACDC's median 1.75 → under-restores.
+Must re-run a source-reset tuned to ACDC's band (≈h1.9/h_warn1.55) before claiming D > source-reset.
+Figures: `python plot_smooth_control.py` → `save/_compare/control_voc20_{bars,trajectories}`.
+Cityscapes matched control (`srctrl_match_h2.4_w2.3_r0.01`) running (headroom too small to be decisive).
+**Paper-narrative consequence:** smooth-anchor is, at best, a *cosmetic reframing* of
+source-reset (ties it) — it is not empirically superior. Pitch it as "a smoother,
+continuous form of the same retreat" if at all, not as a performance win.
+
 ### M-6: SAR-MLMP-SmoothAnchor (`adapt/sar_mlmp_smooth_anchor_continual.py`)
 A user-built combo (SAR reliable-filter + SAM + full MLMP UAML eval + smooth
 anchor). Uses ceil2.9/floor2.2/lag150 — calibrated to **MLMP's higher H_margin
