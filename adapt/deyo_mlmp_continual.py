@@ -109,6 +109,14 @@ class DeYOMLMPContinual:
             self.adapt_times = []
             self.eval_times = []
 
+        # --- Diagnostics (opt-in; set collect_diag=True from main_continual) ---
+        # When on, perform_adaptation() stashes per-batch signals derived from
+        # tensors it ALREADY computes (zero extra forward, zero RNG), and
+        # diagnose() does ONE no_grad RNG-free forward for per-layer/feature
+        # signals. The adaptation math is untouched either way.
+        self.collect_diag = False
+        self.diag = {}
+
     def adapt(self, x):
         return self.perform_adaptation(x)
 
@@ -177,6 +185,10 @@ class DeYOMLMPContinual:
             ent = self.softmax_entropy(logits)         # (T, B, h, w)
             mask_ent = ent < self.deyo_margin
             if mask_ent.sum() == 0:
+                if self.collect_diag:
+                    self.diag.update(prompt_disagree=self._prompt_disagree(logits),
+                                     plpd_mean=float('nan'), grad_norm=0.0,
+                                     filter_pass_rate=0.0)
                 self.optimizer.zero_grad(); continue
 
             with torch.no_grad():
@@ -193,6 +205,10 @@ class DeYOMLMPContinual:
             mask_plpd = plpd > self.plpd_threshold
             final_mask = mask_ent & mask_plpd
             if final_mask.sum() == 0:
+                if self.collect_diag:
+                    self.diag.update(prompt_disagree=self._prompt_disagree(logits),
+                                     plpd_mean=float(plpd.mean()), grad_norm=0.0,
+                                     filter_pass_rate=0.0)
                 self.optimizer.zero_grad(); continue
 
             ent_kept = ent[final_mask]
@@ -208,6 +224,17 @@ class DeYOMLMPContinual:
                 loss = ent_kept.mean()
 
             loss.backward()
+            if self.collect_diag:
+                gn = 0.0
+                for p in self.optimizer.param_groups[0]['params']:
+                    if p.grad is not None:
+                        gn += float(p.grad.detach().float().pow(2).sum())
+                self.diag.update(
+                    prompt_disagree=self._prompt_disagree(logits),
+                    plpd_mean=float(plpd.mean()),
+                    grad_norm=gn ** 0.5,
+                    filter_pass_rate=float(final_mask.float().mean()),
+                )
             self.optimizer.step()
             self.optimizer.zero_grad()
             loss_report.append(loss.item())
@@ -215,6 +242,49 @@ class DeYOMLMPContinual:
         if self.runtime:
             self.adapt_times.append(time.time() - t1)
         return loss_report
+
+    # ===================== Diagnostics (side-effect-free) =====================
+
+    @staticmethod
+    @torch.no_grad()
+    def _disagree(preds, n_views, num_classes):
+        """preds: (n_views, ...) integer argmax maps. Returns mean prediction
+        disagreement = 1 - (per-pixel majority-vote fraction), in [0, 1)."""
+        oh = torch.nn.functional.one_hot(preds, num_classes).float()  # (n_views, ..., C)
+        votes = oh.sum(dim=0)                                          # (..., C)
+        agree = votes.max(dim=-1).values / float(n_views)             # (...,)
+        return float((1.0 - agree).mean())
+
+    @torch.no_grad()
+    def _prompt_disagree(self, logits):
+        """logits: (T, B, C, h, w) per-prompt. Disagreement across the T prompts."""
+        T, B, C = logits.shape[0], logits.shape[1], logits.shape[2]
+        preds = logits.argmax(dim=2)                                  # (T, B, h, w)
+        return self._disagree(preds, T, C)
+
+    @torch.no_grad()
+    def diagnose(self, x):
+        """ONE no_grad, RNG-free forward (out_type='all') for per-layer/feature
+        signals. Stores into self.diag. Safe: the model forward has no dropout /
+        no RNG (dropout_p=0), so inserting this does not perturb the adaptation
+        trajectory (verified by with/without --log_signals bit-identical mIoU)."""
+        if not self.collect_diag:
+            return
+        feats = self.model.encode_image(
+            x, self.vision_outputs, out_type="all")      # (L, B, tokens, D)
+        feats = feats[:, :, 1:, :]                        # drop CLS token
+        L, B, N, D = feats.shape
+        feat_norm = float(feats.norm(dim=-1).mean())
+        fn = feats / feats.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        text = self.text_x[-1]                            # (C, D) averaged prompt
+        text = text / text.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        cos = fn @ text.t()                               # (L, B, N, C)
+        feat_text_align = float(cos.max(dim=-1).values.mean())
+        preds = cos.argmax(dim=-1)                        # (L, B, N)
+        layer_disagree = self._disagree(preds, L, text.shape[0])
+        self.diag.update(feat_norm=feat_norm,
+                         feat_text_align=feat_text_align,
+                         layer_disagree=layer_disagree)
 
     def extract_text_embeddings(self, class_names, prompts, average=True):
         text_features = []

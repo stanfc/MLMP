@@ -138,6 +138,9 @@ def argparser():
                         help='Enable test-time adaptation (omit for source-only baseline)')
     parser.add_argument('--method', type=str, default='cotta',
                         help='Adaptation method name')
+    parser.add_argument('--log_signals', action='store_true',
+                        help='Also log the full collapse/degradation signal panel to '
+                             'signals_log.csv (utils/collapse_signals.py). Opt-in; off by default.')
     parser.add_argument('--batch_size', '--batch-size', type=int, default=1, dest='batch_size')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate — use lower values (1e-4 to 1e-5) for CTTA')
@@ -423,6 +426,55 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--lag_scale', type=float, default=150.0)
         parser.add_argument('--max_lag', type=int, default=3000)
         parser.add_argument('--rst', type=float, default=0.005)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP COMPOSITE gate (mean_conf trigger + grad_norm depth) ---
+    elif method == 'deyo_mlmp_composite_gate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--conf_ceil', type=float, default=0.80,
+                            help='mean_conf trigger: gate restores once windowed '
+                                 'confidence rises past this (past-peak)')
+        parser.add_argument('--base_rst', type=float, default=0.005,
+                            help='restore prob at trigger (grad ratio = 1)')
+        parser.add_argument('--grad_mult_max', type=float, default=4.0,
+                            help='max multiplier on base_rst as grad_norm rises '
+                                 'above its trigger baseline')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP grad_norm-SLOPE gate (rising grad -> lagged restore) ---
+    elif method == 'deyo_mlmp_gradslope_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--slope_window', type=int, default=10,
+                            help='# monitor windows for the grad_norm slope (~500 batches)')
+        parser.add_argument('--slope_deadzone', type=float, default=0.002,
+                            help='slope <= this -> no restore (grad flat/falling). '
+                                 'Observed slopes: ~0.002 (VOC20) .. ~0.008 (ACDC collapse)/window')
+        parser.add_argument('--lag_gain', type=float, default=100000.0,
+                            help='lag = lag_gain * slope (batches to restore back); '
+                                 'slope 0.005 -> lag 500')
+        parser.add_argument('--max_lag', type=int, default=3000)
+        parser.add_argument('--base_rst', type=float, default=0.01,
+                            help='restore prob when gate is active')
         parser.add_argument('--monitor_interval', type=int, default=50)
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
@@ -904,6 +956,20 @@ def main(args):
                 "h_margin,h_pixel_mean,max_logit\n")
     _entropy_total_batches = 0  # monotonic across the whole stream
 
+    # ----- Optional full signal panel (opt-in via --log_signals) -----
+    _signal_monitor = None
+    _signals_log_path = None
+    if args.log_signals:
+        from utils.collapse_signals import SignalMonitor, SIGNAL_NAMES
+        _signal_monitor = SignalMonitor(adapt_method)
+        # Turn on the method's side-effect-free diagnostic stashing, if it supports it.
+        if hasattr(adapt_method, "collect_diag"):
+            adapt_method.collect_diag = True
+        _signals_log_path = os.path.join(args.save_dir, "signals_log.csv")
+        with open(_signals_log_path, 'w') as f:
+            f.write("total_batch,round,condition,batch_idx," + ",".join(SIGNAL_NAMES) + "\n")
+        print(f"  Signal panel log: {_signals_log_path} ({len(SIGNAL_NAMES)} signals)")
+
     print(f"\n{'='*65}")
     print(f"  Starting CTTA: {args.continual_rounds} rounds × {len(conditions)} conditions")
     print(f"  Conditions: {conditions}")
@@ -996,8 +1062,25 @@ def main(args):
                              f"{_h_pixel:.6f},{_max_logit:.6f}\n")
                 # ----- end entropy logging -----
 
+                # ----- Optional diagnostic forward (per-layer/feature signals) -----
+                # RNG-free (model has dropout_p=0), so it does NOT perturb the
+                # adaptation trajectory. Run before adapt to capture pre-update state.
+                if _signal_monitor is not None and hasattr(adapt_method, "diagnose"):
+                    adapt_method.diagnose(inputs)
+
                 if args.adapt:
                     adapt_method.continual_adapt(inputs)
+
+                # ----- Optional full signal panel (written AFTER adapt so the -----
+                # ----- method's adapt-internal diag reflects THIS batch) -----
+                if _signal_monitor is not None:
+                    _sig = _signal_monitor.update(
+                        patch_preds, round_num, condition, batch_idx)
+                    with open(_signals_log_path, 'a') as _f:
+                        _f.write(f"{_entropy_total_batches},{round_num},{condition},"
+                                 f"{batch_idx}," +
+                                 ",".join(f"{v:.6f}" for v in _sig.values()) + "\n")
+                # ----- end signal panel -----
 
                 # Show coreset size for DPCore
                 if hasattr(adapt_method, 'coreset'):

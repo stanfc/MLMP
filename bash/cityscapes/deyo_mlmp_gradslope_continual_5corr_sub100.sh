@@ -1,11 +1,8 @@
 #!/bin/bash
-# deyo_mlmp_smooth_anchor_continual on CityscapesDataset: DeYO + MLMP(multi-prompt/layer+UAML) + SmoothAnchor.
-# RECALIBRATED to actual internal-H scale. Old [2.2,2.9] sat above the observed
-# internal-H range [2.24,2.56] -> restore on 100%, capping peak. internal_H ~= eval_H + 0.24;
-# no-gate peak (R15, mIoU 24.1) -> internal_H ~2.29; collapse onset -> ~2.05; deep -> <1.65.
-# Align with proven DivGate calibration (h_threshold=2.1): restore OFF while H>=2.1
-# (free climb to peak), engages as H drops below 2.1.
-# lag(H)=90/(H-1.7), h_ceil=2.1, h_floor=1.7. gate H logged to gate_log.csv.
+# deyo_mlmp_gradslope_continual on CityscapesDataset (5corr sub100).
+# Composite gate: mean_conf TRIGGER + grad_norm DEPTH.
+# conf_ceil from observed mean_conf at the mIoU peak (Cityscapes peak conf 0.707 @R15).
+# See docs/2026-06-18-contribution.md §7.
 
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
@@ -19,7 +16,7 @@ INIT_RESIZE="1120 560"
 CONDITIONS="snow frost fog brightness contrast"
 WORKERS=0
 
-METHOD="deyo_mlmp_smooth_anchor_continual"
+METHOD="deyo_mlmp_gradslope_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
@@ -30,14 +27,13 @@ LR=0.000005
 STEPS=1
 CONTINUAL_ROUNDS=150
 
-H_CEIL=2.1
-H_FLOOR=1.7
-LAG_SCALE=90
-MAX_LAG=3000
-RST=0.005
+SLOPE_WINDOW=10
+SLOPE_DEADZONE=0.002
+LAG_GAIN=100000
+BASE_RST=0.01
 MONITOR_INTERVAL=50
 
-SAVE_DIR="save/${DATASET}/${METHOD}_recal_h2.1_1.7_5corr_sub100/"
+SAVE_DIR="save/${DATASET}/${METHOD}_5corr_sub100/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -63,11 +59,10 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --seed 0 \
                         \
                         --vision_outputs $OUT_VISION \
-                        --h_ceil $H_CEIL \
-                        --h_floor $H_FLOOR \
-                        --lag_scale $LAG_SCALE \
-                        --max_lag $MAX_LAG \
-                        --rst $RST \
+                        --slope_window $SLOPE_WINDOW \
+                        --slope_deadzone $SLOPE_DEADZONE \
+                        --lag_gain $LAG_GAIN \
+                        --base_rst $BASE_RST \
                         --monitor_interval $MONITOR_INTERVAL \
                         \
                         --save_dir $SAVE_DIR \
