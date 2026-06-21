@@ -56,6 +56,7 @@ from .deyo_mlmp_continual import DeYOMLMPContinual
 from .eata_continual import EATAContinual
 from .dat_continual import DATContinual
 from .deyo_mlmp_divgate_continual import DeYOMLMPDivGateContinual
+from .deyo_mlmp_gradpen_divgate_continual import DeYOMLMPGradPenDivGateContinual
 from .deyo_mlmp_smooth_anchor_continual import DeYOMLMPSmoothAnchorContinual
 from .deyo_mlmp_composite_gate_continual import DeYOMLMPCompositeGateContinual
 from .deyo_mlmp_gradslope_continual import DeYOMLMPGradSlopeContinual
@@ -161,6 +162,7 @@ METHOD_CLASSES = {
     'dat_continual': DATContinual,
     # DeYO + full MLMP (multi-prompt/layer + UAML) + DivGate restore
     'deyo_mlmp_divgate_continual': DeYOMLMPDivGateContinual,
+    'deyo_mlmp_gradpen_divgate_continual': DeYOMLMPGradPenDivGateContinual,
     # DeYO + MLMP + SmoothAnchor (continuous lag(H) restore)
     'deyo_mlmp_smooth_anchor_continual': DeYOMLMPSmoothAnchorContinual,
     # DeYO + MLMP + COMPOSITE gate (mean_conf trigger + grad_norm-scaled restore)

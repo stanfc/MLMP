@@ -415,6 +415,28 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--cautious_rst', type=float, default=0.005)
         parser.add_argument('--brake_rst', type=float, default=0.02)
 
+    elif method == 'deyo_mlmp_gradpen_divgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--h_threshold', type=float, default=2.0)
+        parser.add_argument('--h_warning', type=float, default=1.7)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--cautious_rst', type=float, default=0.005)
+        parser.add_argument('--brake_rst', type=float, default=0.02)
+        parser.add_argument('--grad_pen_lambda', type=float, default=0.0,
+                            help='strength of the ||grad||^2 penalty; 0 = divgate baseline')
+        parser.add_argument('--grad_pen_form', type=str, default='sq',
+                            choices=['sq', 'linear'])
+
     # --- DeYO + MLMP + SmoothAnchor ---
     elif method == 'deyo_mlmp_smooth_anchor_continual':
         parser.add_argument('--vision_outputs', nargs='+', type=int,
