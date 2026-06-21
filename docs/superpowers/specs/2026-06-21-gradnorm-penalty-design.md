@@ -191,5 +191,69 @@ so on VOC20 the λ penalty is the *only* active defence — directly probing whe
 ## 7. Out of scope (documented fallbacks, not built now)
 
 - SAM-based variant (option B from brainstorming).
-- Gate-gated / warmup penalty timing (only if always-on suppresses the peak).
 - Per-layer / curvature-weighted penalty.
+
+---
+
+## 8. REVISION (2026-06-22) — smoke calibration killed the always-on raw penalty; redesign to penalise grad_norm *rise*
+
+### 8.1 What the smoke found
+On VOC20 (subset 20, 2–3 rounds) the always-on raw penalty has **no usable
+"effective + stable" band**:
+
+| form | λ | behaviour |
+|---|---|---|
+| sq | 1e-4, 3e-4 | ≈ baseline (no effect) |
+| sq | **1e-3** | **collapse** (mIoU 55→0.23 after one step) |
+| linear | 3e-3, 1e-2, 3e-2 | stable but ≈ baseline |
+| linear | **0.1, 0.3, 1.0** | **collapse** |
+
+Verified separately that λ=0 is **bit-identical** to the divgate baseline (correctness
+of the method holds) — the problem is the *strategy*, not the code.
+
+### 8.2 Root cause (confirms the brainstorming risk)
+`grad_norm` is high during **both** healthy adaptation (the U-shape left arm, R1→peak)
+**and** degradation (right arm). An always-on penalty on the *raw* norm cannot tell
+them apart: gentle → ignores everything; strong enough to bite degradation → also kills
+the healthy gradient → one-step collapse. Penalising the *absolute* grad_norm is wrong.
+
+### 8.3 Redesign: penalise the RISE of grad_norm above a healthy running baseline
+Keep the same file + DivGate (λ=0 stays the bit-identical control). Add a mode knob;
+the penalised quantity becomes `relu(‖∇L‖ − g_ref)` so it is **zero during the healthy
+phase** (no interference) and only bites when grad_norm regresses upward (degradation).
+
+New CLI args (supersede §3.4's two-arg list):
+- `--grad_pen_lambda` (float, default 0.0) — strength.
+- `--grad_pen_form` (sq/linear, default linear) — applies to the *penalised quantity*
+  (raw norm in `raw` mode, the excess in `excess`/`ema`). **Default switched to
+  `linear`** (sq is a knife-edge per §8.1).
+- `--grad_pen_mode {raw, excess, ema}` (default `raw`) — `raw` = always-on (kept as the
+  known-bad reference); `excess`/`ema` = penalise rise above a baseline.
+- `--grad_pen_ema_decay` (float, default 0.99) — α for `ema` mode.
+- `--grad_clip` (float, default 0.0 = off; recommend ~10) — `clip_grad_norm_` on LN
+  params after `total.backward()`, **only when grad_pen_lambda>0** (keeps λ=0 pristine);
+  clips the occasional grad_norm spike (~88) that can one-shot the model.
+
+Baseline `g_ref` (a detached scalar) updated every `monitor_interval` window from the
+window-mean per-step grad_norm `gw`:
+- `excess`: `g_ref = min(g_ref, gw)`  (rise above best-ever-healthy floor)
+- `ema`:    `g_ref = α·g_ref + (1−α)·gw`  (rise above recent smoothed level)
+- both: `g_ref` starts undefined → penalty 0 for the first window (natural warmup).
+
+Penalty term: `gnorm = sqrt(grad_sq); excess = relu(gnorm − g_ref);
+penalty = excess**2 if form=='sq' else excess;  total = loss + λ·penalty`. When
+`excess==0`, `total.backward()` equals `loss.backward()` for that step.
+
+### 8.4 Why keep the DivGate (answer to "do we add the gate?")
+Yes. λ=0 → proven divgate baseline (clean control, no attribution confound). The
+rise-penalty only fires on degradation, so it is **complementary** to the gate, not
+redundant. On VOC20 the gate never fires → the penalty stands alone there (the key
+hypothesis test). A no-gate ablation is optional future work.
+
+### 8.5 Revised experiment grid
+Compare **both** `excess` and `ema` (user request). λ must be **recalibrated** for the
+excess form on the 20-image subset (same method as §8.1) before the 150R sweep, because
+`relu(‖∇L‖ − g_ref)` is smaller than the raw norm → needs a different λ scale. Sweep:
+`grad_pen_mode ∈ {excess, ema} × λ ∈ {recalibrated grid}`, `--grad_pen_form linear`,
+`--grad_clip 10`, gate at each dataset's proven config; plus λ=0 (divgate) control and
+optionally one `raw` reference. VOC20 first (cleanest), then ACDC / Cityscapes.
