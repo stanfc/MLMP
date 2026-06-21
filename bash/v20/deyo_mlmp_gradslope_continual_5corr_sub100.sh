@@ -1,27 +1,24 @@
 #!/bin/bash
-# deyo_mlmp_smooth_anchor_continual on ACDCDataset: DeYO + MLMP(multi-prompt/layer+UAML) + SmoothAnchor.
-# RECALIBRATED to the actual internal-H scale (see below). Old [2.2,2.9] window sat
-# entirely ABOVE the observed internal-H range [2.24,2.51] -> restore was on 100% of
-# the time, capping the peak. Internal-H ~= eval-H + 0.25; mapping no-gate's trajectory:
-#   peak (R34, mIoU 33.5) -> internal_H ~2.05;  collapse onset -> ~1.9-2.0;  deep -> <1.65.
-# So align with the proven DivGate calibration (h_threshold=2.0): restore stays OFF while
-# H>=2.0 (free climb to peak), engages as H drops below 2.0.
-# lag(H)=90/(H-1.6), h_ceil=2.0 (no restore during healthy climb),
-# h_floor=1.6 (deep collapse -> source). gate H logged to gate_log.csv.
+# deyo_mlmp_gradslope_continual on PascalVOC20Dataset (5corr sub100).
+# Composite gate: mean_conf TRIGGER + grad_norm DEPTH. This is the KEY test —
+# H_margin is blind to VOC20's uniform degradation, but grad_norm tracks it and
+# mean_conf is monotone, so the composite should brake here too.
+# conf_ceil from observed mean_conf at the mIoU peak (VOC20 peak conf 0.732 @R59).
+# See docs/2026-06-18-contribution.md §7.
 
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=${GPU_ID:-3}
+GPU_ID=2
 
-DATASET=ACDCDataset
-DATA_DIR=".data/ACDC/"
-INIT_RESIZE="1120 560"
-CONDITIONS="fog night rain snow"
-WORKERS=1
+DATASET=PascalVOC20Dataset
+DATA_DIR=".data/VOC2012/"
+INIT_RESIZE="224 224"
+CONDITIONS="snow frost fog brightness contrast"
+WORKERS=0
 
-METHOD="deyo_mlmp_smooth_anchor_continual"
+METHOD="deyo_mlmp_gradslope_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
@@ -32,14 +29,16 @@ LR=0.000005
 STEPS=1
 CONTINUAL_ROUNDS=150
 
-H_CEIL=2.0
-H_FLOOR=1.6
-LAG_SCALE=90
-MAX_LAG=3000
-RST=0.005
+# slope_window 10 (~500 batch) was too noisy on V20 -> false early triggering
+# capped the climb (peak only 75.0). 50 windows ~= 2500 batch (5 rounds) smooths
+# the medium-term trend so restore only fires on a real sustained grad rise.
+SLOPE_WINDOW=50
+SLOPE_DEADZONE=0.002
+LAG_GAIN=100000
+BASE_RST=0.01
 MONITOR_INTERVAL=50
 
-SAVE_DIR="save/${DATASET}/${METHOD}_recal_h2.0_1.6/"
+SAVE_DIR="save/${DATASET}/${METHOD}_sw50_5corr_sub100/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -55,6 +54,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CONDITIONS \
                         --workers $WORKERS \
+                        --subset_size 100 \
+                        --subset_seed 0 \
                         \
                         --lr $LR \
                         --steps $STEPS \
@@ -63,11 +64,10 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --seed 0 \
                         \
                         --vision_outputs $OUT_VISION \
-                        --h_ceil $H_CEIL \
-                        --h_floor $H_FLOOR \
-                        --lag_scale $LAG_SCALE \
-                        --max_lag $MAX_LAG \
-                        --rst $RST \
+                        --slope_window $SLOPE_WINDOW \
+                        --slope_deadzone $SLOPE_DEADZONE \
+                        --lag_gain $LAG_GAIN \
+                        --base_rst $BASE_RST \
                         --monitor_interval $MONITOR_INTERVAL \
                         \
                         --save_dir $SAVE_DIR \
