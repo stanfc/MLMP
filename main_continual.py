@@ -433,9 +433,15 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--cautious_rst', type=float, default=0.005)
         parser.add_argument('--brake_rst', type=float, default=0.02)
         parser.add_argument('--grad_pen_lambda', type=float, default=0.0,
-                            help='strength of the ||grad||^2 penalty; 0 = divgate baseline')
-        parser.add_argument('--grad_pen_form', type=str, default='sq',
+                            help='strength of the ||grad|| penalty; 0 = divgate baseline')
+        parser.add_argument('--grad_pen_form', type=str, default='linear',
                             choices=['sq', 'linear'])
+        parser.add_argument('--grad_pen_mode', type=str, default='raw',
+                            choices=['raw', 'excess', 'ema'],
+                            help='raw=always-on; excess/ema=penalise rise above baseline')
+        parser.add_argument('--grad_pen_ema_decay', type=float, default=0.99)
+        parser.add_argument('--grad_clip', type=float, default=0.0,
+                            help='clip_grad_norm_ on LN params (0=off); only when lambda>0')
 
     # --- DeYO + MLMP + SmoothAnchor ---
     elif method == 'deyo_mlmp_smooth_anchor_continual':

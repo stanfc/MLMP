@@ -87,7 +87,9 @@ class DeYOMLMPGradPenDivGateContinual:
                  monitor_interval=50,
                  cautious_rst=0.005, brake_rst=0.02,
                  # --- gradient-norm penalty ---
-                 grad_pen_lambda=0.0, grad_pen_form='sq',
+                 grad_pen_lambda=0.0, grad_pen_form='linear',
+                 grad_pen_mode='raw', grad_pen_ema_decay=0.99,
+                 grad_clip=0.0,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
@@ -104,6 +106,11 @@ class DeYOMLMPGradPenDivGateContinual:
         import os
         self.grad_pen_lambda = float(grad_pen_lambda)
         self.grad_pen_form = str(grad_pen_form)
+        self.grad_pen_mode = str(grad_pen_mode)
+        self.grad_pen_ema_decay = float(grad_pen_ema_decay)
+        self.grad_clip = float(grad_clip)
+        self.g_ref = None          # healthy grad_norm baseline (excess/ema modes)
+        self.gradn_buf = []        # per-step grad_norm within the current window
         self.gate_log_path = None
         self.gradpen_log_path = None
         if save_dir:
@@ -281,12 +288,18 @@ class DeYOMLMPGradPenDivGateContinual:
                         # explicit grad-norm penalty (double backward, fp32)
                         g = torch.autograd.grad(loss, ln_params, create_graph=True)
                         grad_sq = sum((gi.float() ** 2).sum() for gi in g)
-                        if self.grad_pen_form == 'linear':
-                            penalty = grad_sq.clamp(min=1e-12).sqrt()
+                        gnorm = grad_sq.clamp(min=1e-12).sqrt()
+                        if self.grad_pen_mode == 'raw':
+                            quantity = gnorm
+                        elif self.g_ref is None:
+                            quantity = gnorm * 0.0           # first window: no penalty
                         else:
-                            penalty = grad_sq
+                            quantity = (gnorm - self.g_ref).clamp(min=0.0)  # penalise rise
+                        penalty = quantity ** 2 if self.grad_pen_form == 'sq' else quantity
                         total = loss + self.grad_pen_lambda * penalty
                         total.backward()
+                        if self.grad_clip > 0.0:
+                            torch.nn.utils.clip_grad_norm_(ln_params, self.grad_clip)
                         grad_norm_raw = float(grad_sq.detach().sqrt())
                         penalty_val = float(penalty.detach())
                     else:
@@ -299,6 +312,8 @@ class DeYOMLMPGradPenDivGateContinual:
                         grad_norm_raw = float(gsq.sqrt())
                         penalty_val = 0.0
                     self._log_gradpen(grad_norm_raw, penalty_val)
+                    if self.grad_pen_mode != 'raw':
+                        self.gradn_buf.append(grad_norm_raw)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     # gate stochastic restore after the step
@@ -308,6 +323,14 @@ class DeYOMLMPGradPenDivGateContinual:
             self.batch_count += 1
             self.total_batches += 1
             if self.batch_count >= self.monitor_interval:
+                if self.grad_pen_mode != 'raw' and self.gradn_buf:
+                    gw = sum(self.gradn_buf) / len(self.gradn_buf)
+                    if self.grad_pen_mode == 'excess':
+                        self.g_ref = gw if self.g_ref is None else min(self.g_ref, gw)
+                    elif self.grad_pen_mode == 'ema':
+                        self.g_ref = gw if self.g_ref is None else \
+                            self.grad_pen_ema_decay * self.g_ref + (1 - self.grad_pen_ema_decay) * gw
+                    self.gradn_buf = []
                 self._update_mode()
 
         if self.runtime:
