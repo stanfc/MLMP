@@ -282,7 +282,7 @@ cd /home/tekai324/MLMP
 conda run -n MLMP env OPENCV_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=3 \
   python main_continual.py --adapt --method deyo_mlmp_divgate_continual \
   --ovss_type naclip --ovss_backbone ViT-L/14 --prompt_dir prompts.yaml \
-  --dataset PascalVOC20Dataset --data_dir .data/VOC2012/ \
+  --dataset PascalVOC20Dataset --data_dir data/VOC/VOC2012/ \
   --init_resize 224 224 --patch_size 224 224 --patch_stride 112 \
   --corruptions_list snow frost fog brightness contrast \
   --subset_size 20 --subset_seed 0 --workers 1 \
@@ -300,7 +300,7 @@ Expected: completes 1 round, writes `save/_smoke/divgate_ref/results_all_rounds.
 conda run -n MLMP env OPENCV_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=3 \
   python main_continual.py --adapt --method deyo_mlmp_gradpen_divgate_continual \
   --ovss_type naclip --ovss_backbone ViT-L/14 --prompt_dir prompts.yaml \
-  --dataset PascalVOC20Dataset --data_dir .data/VOC2012/ \
+  --dataset PascalVOC20Dataset --data_dir data/VOC/VOC2012/ \
   --init_resize 224 224 --patch_size 224 224 --patch_stride 112 \
   --corruptions_list snow frost fog brightness contrast \
   --subset_size 20 --subset_seed 0 --workers 1 \
@@ -352,7 +352,7 @@ cd /home/tekai324/MLMP
 conda run -n MLMP env OPENCV_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=3 \
   python main_continual.py --adapt --method deyo_mlmp_gradpen_divgate_continual \
   --ovss_type naclip --ovss_backbone ViT-L/14 --prompt_dir prompts.yaml \
-  --dataset PascalVOC20Dataset --data_dir .data/VOC2012/ \
+  --dataset PascalVOC20Dataset --data_dir data/VOC/VOC2012/ \
   --init_resize 224 224 --patch_size 224 224 --patch_stride 112 \
   --corruptions_list snow frost fog brightness contrast \
   --subset_size 20 --subset_seed 0 --workers 1 \
@@ -416,7 +416,7 @@ export OPENCV_NUM_THREADS=2
 GPU_ID=${GPU_ID:-3}
 
 DATASET=ACDCDataset
-DATA_DIR=".data/ACDC/"
+DATA_DIR="data/ACDC/"
 INIT_RESIZE="1120 560"
 CONDITIONS="fog night rain snow"
 WORKERS=1
@@ -495,7 +495,7 @@ export OPENCV_NUM_THREADS=2
 GPU_ID=${GPU_ID:-3}
 
 DATASET=PascalVOC20Dataset
-DATA_DIR=".data/VOC2012/"
+DATA_DIR="data/VOC/VOC2012/"
 INIT_RESIZE="224 224"
 CONDITIONS="snow frost fog brightness contrast"
 WORKERS=1
@@ -569,7 +569,7 @@ identical to Step 2 except:
 # header comment:
 # deyo_mlmp_gradpen_divgate on CityscapesDataset (5corr, subset 100).
 DATASET=CityscapesDataset
-DATA_DIR=".data/cityscapes/"
+DATA_DIR="data/Cityscape/"
 INIT_RESIZE="1120 560"
 # gate defaults:
 H_THRESHOLD=${H_THRESHOLD:-2.1}
