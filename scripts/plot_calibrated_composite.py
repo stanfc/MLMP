@@ -45,8 +45,8 @@ def fig_acdc_fix():
     ax.axhline(31.8, ls="--", color="#9b8d3a", lw=1.4, label="DeYO-DivGate ref (31.8)")
     ax.axhline(29.84, ls=":", color="#7aa6c2", lw=1.3, label="Episodic (29.84)")
     ax.set_ylim(28, 34.2)
-    ax.set_title("ACDC: calibrating conf_ceil to gate scale removes the oscillation",
-                 fontweight="bold")
+    ax.set_title("ACDC: calibrated conf_ceil cuts oscillation 3x (std 1.46->0.49) & raises the floor",
+                 fontweight="bold", fontsize=10.5)
     ax.set_xlabel("round"); ax.set_ylabel("mIoU"); ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower center")
     fig.tight_layout(); p = os.path.join(OUT, "cal_acdc_fix.png")
