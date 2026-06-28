@@ -1042,24 +1042,56 @@ Analysis scripts: `scripts/analyze_acdc_v20_sar_mlmp.py`, `scripts/analyze_citys
 - SAR reliable-filter pass rate: ACDC 100%, Cityscapes 100%, V20 93% (e_margin=1.8 is
   not starving adaptation — confirmed via `sar_log.txt`).
 
-### N-3: ceil/floor/lag/rst sweep — RUNNING (16 configs, 150R, launched 2026-06-09)
+### N-3: ceil/floor/lag/rst sweep — DONE (16 configs × 150R, 2026-06-10)
 
-Launcher `bash/sweep_sar_mlmp_ceil_floor.sh` (env-overrides the two runners; packed
-GPUs 0–3, cv2 thread-capped, staggered). Logs `save/_sweep_logs/`. Save dirs
+Launcher `bash/sweep_sar_mlmp_ceil_floor.sh`. Save dirs
 `save/{ACDCDataset|PascalVOC20Dataset/v20_acdc_matched}/smlp_c<ceil>_f<floor>_l<lag>_r<rst>/`.
+Figures + per-config table: `python scripts/plot_sweep_sar_mlmp.py` →
+`save/ACDCDataset/acdc_sweep_sar_mlmp.png`, `.../v20_acdc_matched/v20_sweep_sar_mlmp.png`.
 
-- **ACDC ×8 (loosen to climb; target >30.6)**: c2.4_f2.2_l150_r0.005,
-  c2.5_f2.2_l150_r0.005, c2.9_f1.9_l150_r0.005, c2.9_f2.0_l100_r0.005,
-  c2.9_f2.2_l150_r0.002, c2.4_f1.9_l100_r0.003, c2.9_f2.4_l150_r0.005 (floor↑ test),
-  c2.6_f2.4_l150_r0.008 (ceil↑+floor↑ test).
-- **V20 ×8 (tighten/hold peak; target >76.2)**: c3.2_f2.2_l150_r0.005,
-  c3.4_f2.2_l150_r0.005, c3.2_f2.4_l150_r0.005, c3.2_f2.2_l150_r0.01,
-  c3.4_f2.6_l150_r0.01, c3.2_f2.5_l100_r0.005, c2.9_f2.5_l150_r0.005 (floor↑ only),
-  c3.4_f2.2_l300_r0.005 (deep anchor).
-- All 16 verified started cleanly (env overrides applied, no crashes). **Collect when
-  done**: rank by mean-all vs episodic (ACDC 30.6, V20 76.2); check if any single
-  config clears all three. Quick rank: `awk -F, '/^Round/{s+=$NF;n++}END{print s/n}'`
-  over each `smlp_*/results_all_rounds.txt`.
+**V20 weather (episodic 76.21, baseline 75.63) — ALL 8 BEAT EPISODIC ✅**
+
+| config (ceil/floor/lag/rst) | meanAll | peak | last | note |
+|---|---|---|---|---|
+| c3.2/f2.2/l150/**r0.010** | **77.15** | 78.00 | 76.93 | best mean |
+| c3.4/f2.2/l300/r0.005 | 77.00 | 77.79 | 76.47 | |
+| **c3.4/f2.6/l150/r0.010** | 76.96 | 77.99 | **77.96** | best stability (last≈peak, zero decline) |
+| c3.2/f2.4/l150/r0.005 | 76.75 | 77.81 | 75.08 | |
+| c3.2/f2.5/l100/r0.005 | 76.63 | 77.78 | 75.48 | |
+| c2.9/f2.5/l150/r0.005 | 76.37 | 77.66 | 75.40 | ceil too low → 37% gateOFF |
+| c3.2/f2.2/l150/r0.005 | 76.32 | 77.77 | 74.23 | |
+| c3.4/f2.2/l150/r0.005 | 76.32 | 77.77 | 74.23 | |
+
+Mechanism (confirmed via `gate_log.csv`): the **old baseline ceil2.9** sat *inside*
+V20's adapt-time H band (2.70–3.10) → `gateOFF 34%`, gate disengaged in healthy
+windows, let the R36 peak slide to 73.98. **Raising ceil to 3.2/3.4 (above the H
+band)** → `gateOFF 0%`, gate always engaged → peak held. `rst 0.010 > 0.005`
+strengthens the hold (+0.5 mean). **Lever = ceil above H band + higher rst.**
+
+**ACDC (episodic 30.6, baseline 30.05, No-Adapt 23.34) — NONE BEAT EPISODIC ❌**
+
+| config | meanAll | peak | last |
+|---|---|---|---|
+| c2.9/f2.2/l150/**r0.002** | **30.05** | 30.14 | 30.03 | ← best, = baseline |
+| c2.4/f2.2/l150/r0.005 | 30.04 | 30.12 | 30.06 |
+| c2.5/f2.2/l150/r0.005 | 30.03 | 30.13 | 30.08 |
+| c2.9/f2.4/l150/r0.005 | 29.78 | 29.80 | 29.77 | floor↑ HURTS |
+| c2.4/f1.9/l100/r0.003 | 29.63 | 30.13 | 29.40 | floor↓ → climbs then drifts |
+
+All 8 clustered 29.63–30.05 (≈ baseline), peak ≤30.2. **Gate tuning cannot break
+ACDC's ceiling** — two `gate_log.csv`/`sar_log.txt` facts explain why:
+1. Gate is PINNED: ACDC adapt-time H ≈ 2.28 (2.22–2.50), *below any reasonable
+   ceil* → `gateOFF≈0%`, `deepLag>1000 = 88–100%` → always deep-restoring. ceil
+   2.4 vs 2.9 makes ~no behavioral difference (H never reaches it). User's "raise
+   ceil helps a bit" does **not** hold on ACDC (H too low to ever touch ceil).
+2. SAR reliable filter is INACTIVE: ACDC mean pixel entropy ≈ **1.25 ≪ e_margin 1.8**
+   → **0% samples filtered**. (V20 = 1.47, 17% filtered.) So e_margin in 1.4–2.2 is a
+   no-op on ACDC; it would only engage if lowered *below* ~1.25.
+- Floor↑ (user's "easier source restore" idea) **hurt** on ACDC (f2.4 worst): the
+  model is already over-restoring (pinned deep), more source pull just drags it
+  toward the 29.7 R1 start.
+- **Conclusion: ACDC's ceiling is in the base SAR+UAML loss, not the gate.** R1
+  starts 29.7, peak only ~30.2; smooth-anchor is second-order here.
 
 ### N-4: Infra notes
 - **OpenCV thread saturation fix** (needed for many concurrent jobs): added
@@ -1073,6 +1105,80 @@ GPUs 0–3, cv2 thread-capped, staggered). Logs `save/_sweep_logs/`. Save dirs
 - Cityscapes full method comparison (404/round, 150R): sar_mlmp 20.42 (best,
   >episodic) > MLMP-DivGate 19.65 > No-Adapt 18.47; naive TENT/MLMP/SAR-continual
   collapsed (R150 1.33 / 0.16 / 9.37). CoTTA was still running at writing.
+
+---
+
+## 18. Phase O: grad_norm gate-mechanism campaign (2026-06-21 → 06-25)
+
+Goal: a DeYO+MLMP CTTA defense that is both HIGH and STABLE, beating the bar
+**DeYO-DivGate** (學長, 150R: ACDC **31.8**, Cityscapes **23.6**, VOC20 **77.4**).
+Plain-language mechanism reference: **docs/gate_mechanisms_catalog.md** (+ `_zh.md`).
+All runs: DeYO+MLMP base, NA-CLIP ViT-L/14, LN-only, seed 0, 150R. Data paths on THIS
+machine: ACDC `data/ACDC/`, VOC20 `data/VOC/VOC2012/`, Cityscapes `data/Cityscape/`.
+
+### O-1. grad_norm as a LOSS PENALTY — FAILED (negative result)
+Idea (user): grad_norm ∝ −mIoU (學長 §7), so add `λ‖∇L‖²` to the loss to suppress it.
+Method `adapt/deyo_mlmp_gradpen_divgate_continual.py` (λ=0 = bit-identical divgate control;
+modes raw/excess/ema + grad_clip). **No usable λ**: small=flat(=baseline), large=collapse;
+excess/ema rise-penalties collapse too; grad_clip doesn't save it. **Cause:** grad_norm is
+high even when healthy (per-step spikes ~88) so penalising it fights healthy learning, AND
+the penalty gradient direction (Hessian·∇L) is destabilising. **Lesson: grad_norm is a good
+degradation DETECTOR, a bad loss TARGET → use it for restoration, not in the loss.** Spec
+`docs/superpowers/specs/2026-06-21-gradnorm-penalty-design.md` §8.
+
+### O-2. gradslope (grad_norm slope → restore to lagged snapshot) — stable but loses to divgate
+`deyo_mlmp_gradslope_continual`. Our sweep (`bash/sweep_gradslope.sh`): slope_deadzone ×
+base_rst, **slope_window=10 / max_lag=3000 FIXED**. Result: stable, beats episodic on all 3,
+**doesn't beat divgate** (VOC20 73.6, ACDC 31.5, Cityscapes 23.4). slope_deadzone INSENSITIVE;
+base_rst 0.01>0.02. **Important:** we only swept the insensitive axis — our runs ARE 學長's
+"sw10" line (numbers match: VOC20 pk75.0). The SENSITIVE axis is **slope_window (10/50/100)
++ max_lag** (學長's figure: sw100/lag300 reach higher peaks but DECAY badly). Not yet swept here.
+
+### O-3. composite (mean_conf TRIGGER + grad_norm DEPTH → restore to source) — THE WIN
+`deyo_mlmp_composite_gate_continual` (`bash/sweep_composite.sh`). Two stages:
+- **First sweep (conf_ceil 0.78/0.83/0.86 ACDC etc.) — gate NEVER fired (0-2%).** Bug: conf_ceil
+  was set to 學長's **evaluate-scale** mean_conf peak (0.85/0.71/0.73), but the gate computes
+  mean_conf on the **adapt-scale (7-prompt ensemble)** which is ~0.05-0.07 LOWER. So conf_ceil
+  sat above the gate's actual mean_conf range → never triggered → "composite" = bare base.
+  (Same two-scales trap as H_margin eval-vs-gate-internal, §7.5 of the contribution doc.)
+- **Calibrated sweep (conf_ceil to gate-internal scale): WIN.** Gate-internal mean_conf AT the
+  mIoU peak: ACDC **0.696**, VOC20 0.584, Cityscapes 0.510. Set conf_ceil ≈ that.
+
+**Calibrated results (150R, best configs):**
+| dataset | best config | mean | peak | std(R30+) | vs divgate |
+|---|---|---|---|---|---|
+| **ACDC** | composite **cc0.70 rst0.02** | **32.30** | 33.40 | **0.49** | **✅ +0.5, & far smoother** |
+| **VOC20** | composite cc0.60 rst0.005 | **77.74** | 78.73 | 0.28 | **✅ +0.34** |
+| Cityscapes | composite cc0.66 rst0.005 (gate-off) | 23.42 | 24.05 | 0.16 | ≈ (−0.2, headroom-limited) |
+
+- **ACDC is the headline**: calibrated composite beats divgate (32.3 vs 31.8) AND cuts the
+  oscillation 3× (std 1.46→0.49, floor <28→~31.5). vs gradslope 31.5/std0.65, vs episodic 29.84.
+- **Mechanism**: even with low firing (~1%), the FEW restores fire AT THE PEAK (when mean_conf
+  crosses conf_ceil) and **cap over-confidence** — mean_conf held at ~0.70 (calibrated) vs 0.78
+  (uncalibrated) — preventing the collapse-oscillation. **Timing (conf_ceil) matters, not
+  frequency.** rst0.02 > rst0.04 (gentler restore = smoother).
+- **VOC20**: gate barely fires (correct — VOC20 uniform-drift, restoring HURTS; gradslope's active
+  restore is why it capped at 73.6). Calibration didn't hurt it.
+- **Cityscapes**: calibrated conf_ceil 0.48/0.52 was set BELOW the peak 0.51 → over-restored
+  (10-30% firing) → dropped to 22.8-23.0. **Lesson: conf_ceil must be ≥ peak mean_conf.** Best
+  Cityscapes stays the gate-off 23.42. Headroom-limited (everything 22.8-23.6) so gate ~irrelevant.
+
+### O-4. Open next steps
+1. Cityscapes: re-run composite with conf_ceil {0.52,0.55,0.58} (≥ peak 0.51) — proper calibration.
+2. gradslope: sweep the SENSITIVE axis (slope_window 10/50/100 × max_lag 3000/300), like 學長,
+   to see if any holds high without the late decay.
+3. Same-machine DeYO-DivGate baseline (currently using 學長's numbers; user said confirmed, low priority).
+4. ACDC residual sawtooth: try damped trigger (hysteresis/deadband on conf_ceil, EMA-smoothed rst).
+
+### O-5. Tooling added this phase
+- Methods: `adapt/deyo_mlmp_{gradpen_divgate,gradslope,composite_gate}_continual.py` (gradslope/
+  composite from 學長's 06-18 merge; gradpen new this session).
+- Launchers: `bash/sweep_gradslope.sh`, `bash/sweep_composite.sh` (per-dataset, CONCURRENT to
+  pack GPU mem, env-overridable GPU/ROUNDS/STAGGER; SEQ=1 for sequential).
+- Figures: `scripts/plot_session_gates.py`, `plot_perf_by_dataset.py`, `plot_calibrated_composite.py`
+  → `save/_compare/{session_*,perf_*,cal_*}.png`.
+- Catalog: `docs/gate_mechanisms_catalog.md` (EN) + `_zh.md` (詳細中文，逐術語).
+- Spec/plan: `docs/superpowers/{specs,plans}/2026-06-21-gradnorm-penalty*`.
 
 ---
 
