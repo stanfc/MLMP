@@ -56,7 +56,7 @@ def fig_acdc_fix():
 # ---------- Fig 2: conf_ceil lever (ACDC, rst0.02 series) ----------
 def fig_conf_lever():
     # rst0.02 across conf_ceil; include old hold variant cc0.78_rst0.02
-    ccs = [0.68, 0.70, 0.72, 0.78]
+    ccs = ["0.68", "0.70", "0.72", "0.78"]   # strings to match dir names (trailing 0)
     means, stds = [], []
     for cc in ccs:
         ms = rounds(f"{A}/deyo_mlmp_composite_cc{cc}_rst0.02_gm4")
@@ -72,10 +72,10 @@ def fig_conf_lever():
     ax1.text(len(ccs)-1, 31.85, "DivGate 31.8", fontsize=7, color="#9b8d3a", ha="right")
     ax2 = ax1.twinx()
     ax2.bar([i + 0.18 for i in x], stds, width=0.36, color="#d98880", label="steady-state std")
-    ax2.set_ylabel("steady-state std (lower=stabler)", color="#d98880"); ax2.set_ylim(0, 2.0)
+    ax2.set_ylabel("steady-state std (lower=stabler)", color="#d98880"); ax2.set_ylim(0, 2.9)
     for i, v in zip(x, stds):
         ax2.text(i + 0.18, v, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
-    ax1.set_xticks(list(x)); ax1.set_xticklabels([f"{c}\n{'(calib)' if c<0.78 else '(uncalib)'}" for c in ccs])
+    ax1.set_xticks(list(x)); ax1.set_xticklabels([f"{c}\n{'(calib)' if float(c)<0.78 else '(uncalib)'}" for c in ccs])
     ax1.set_xlabel("conf_ceil  (gate-internal mean_conf peak ≈ 0.70)")
     ax1.set_title("ACDC conf_ceil lever (rst0.02): lower conf_ceil -> higher mean, much lower std",
                   fontweight="bold", fontsize=10)
