@@ -1149,7 +1149,7 @@ base_rst 0.01>0.02. **Important:** we only swept the insensitive axis — our ru
 |---|---|---|---|---|---|
 | **ACDC** | composite **cc0.70 rst0.02** | **32.30** | 33.40 | **0.49** | **✅ +0.5, & far smoother** |
 | **VOC20** | composite cc0.60 rst0.005 | **77.74** | 78.73 | 0.28 | **✅ +0.34** |
-| Cityscapes | composite cc0.66 rst0.005 (gate-off) | 23.42 | 24.05 | 0.16 | ≈ (−0.2, headroom-limited) |
+| **Cityscapes** | composite **cc0.60 rst0.005** | **23.66** | 23.90 | **0.07** | **✅ +0.06 (proper calib)** |
 
 - **ACDC is the headline**: calibrated composite beats divgate (32.3 vs 31.8) AND cuts the
   oscillation 3× (std 1.46→0.49, floor <28→~31.5). vs gradslope 31.5/std0.65, vs episodic 29.84.
@@ -1159,9 +1159,11 @@ base_rst 0.01>0.02. **Important:** we only swept the insensitive axis — our ru
   frequency.** rst0.02 > rst0.04 (gentler restore = smoother).
 - **VOC20**: gate barely fires (correct — VOC20 uniform-drift, restoring HURTS; gradslope's active
   restore is why it capped at 73.6). Calibration didn't hurt it.
-- **Cityscapes**: calibrated conf_ceil 0.48/0.52 was set BELOW the peak 0.51 → over-restored
-  (10-30% firing) → dropped to 22.8-23.0. **Lesson: conf_ceil must be ≥ peak mean_conf.** Best
-  Cityscapes stays the gate-off 23.42. Headroom-limited (everything 22.8-23.6) so gate ~irrelevant.
+- **Cityscapes**: full conf_ceil curve (0.48→0.72) shows an **inverted-U with a sweet spot at
+  cc0.60** (fires ~3%, just after the over-confidence onset): mean **23.66**, std **0.07** —
+  beats divgate 23.6. Too low (0.48/0.52) over-fires (10-30%)→22.8; too high (0.66/0.72)
+  fires too late→22.98-23.4. **Lesson: conf_ceil sweet spot is a bit ABOVE the mIoU-peak
+  mean_conf (0.51), catching the over-confidence rise.** So composite beats divgate on ALL 3.
 
 ### O-4. Open next steps
 1. Cityscapes: re-run composite with conf_ceil {0.52,0.55,0.58} (≥ peak 0.51) — proper calibration.

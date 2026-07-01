@@ -93,7 +93,7 @@ def fig_headline():
                      comp=rounds(f"{A}/deyo_mlmp_composite_cc0.70_rst0.02_gm4"),
                      gs=rounds(f"{A}/deyo_mlmp_gradslope_dz0.008_rst0.01")),
         "Cityscapes": dict(noadapt=20.6, episodic=20.0, divgate=23.6,
-                           comp=rounds("save/CityscapesDataset/deyo_mlmp_composite_cc0.66_rst0.005_gm4"),
+                           comp=rounds("save/CityscapesDataset/deyo_mlmp_composite_cc0.60_rst0.005_gm4"),
                            gs=rounds("save/CityscapesDataset/deyo_mlmp_gradslope_dz0.008_rst0.01")),
     }
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.4))
