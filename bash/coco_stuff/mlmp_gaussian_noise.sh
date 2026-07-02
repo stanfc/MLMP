@@ -2,10 +2,10 @@
 GPU_ID=0
 
 # Dataset Configuration
-DATASET=CityscapesDataset
-DATA_DIR=".data/cityscapes/"
-INIT_RESIZE="1120 560"
-ALL_CORRUPTIONS="original gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+DATASET=COCOStuffDataset
+DATA_DIR=".data/coco_stuff164k/"
+INIT_RESIZE="224 224"
+ALL_CORRUPTIONS="gaussian_noise"
 WORKERS=4
 
 # Method and OVSS Model Configuration
@@ -22,8 +22,8 @@ LR=0.001
 STEPS=10
 TRIALS=1
 
-# Output  (new dir; do NOT overwrite the broken lr=0.01 run at .save/.../mlmp/)
-SAVE_DIR=".save/${DATASET}/${METHOD}_lr1e-3/"
+# Output
+SAVE_DIR=".save/${DATASET}/mlmp_gaussian_noise/"
 
 # Run
 CUDA_VISIBLE_DEVICES=$GPU_ID python main.py \
