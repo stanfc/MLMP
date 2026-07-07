@@ -11,6 +11,7 @@ from .dpcore import DPCore
 
 # Continual TTA (no reset, state persists across stream)
 from .mlmp_continual import MLMPContinual
+from .lcotta_mlmp_continual import LCoTTAMLMPContinual
 from .tent_continual import TENTContinual
 from .cma_continual import CMAContinual
 from .cma_proto_continual import CMAProtoContinual
@@ -53,6 +54,7 @@ from .deyo_continual import DeYOContinual
 from .rotta_continual import RoTTAContinual
 from .deyo_uaml_continual import DeYOUAMLContinual
 from .deyo_mlmp_continual import DeYOMLMPContinual
+from .deyo_mlmp_divloss_continual import DeYOMLMPDivLossContinual
 from .eata_continual import EATAContinual
 from .dat_continual import DATContinual
 from .deyo_mlmp_divgate_continual import DeYOMLMPDivGateContinual
@@ -63,6 +65,11 @@ from .deyo_mlmp_gradslope_continual import DeYOMLMPGradSlopeContinual
 from .deyo_mlmp_divreg_continual import DeYOMLMPDivRegContinual
 from .shot_continual import SHOTContinual
 from .deyo_mlmp_divreg_composite_continual import DeYOMLMPDivRegCompositeContinual
+from .deyo_mlmp_gradanchor_continual import DeYOMLMPGradAnchorContinual
+from .deyo_mlmp_gradlagadapt_continual import DeYOMLMPGradLagAdaptContinual
+from .deyo_mlmp_gradratio_continual import DeYOMLMPGradRatioContinual
+from .deyo_mlmp_hmgate_continual import DeYOMLMPHMGateContinual
+from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
@@ -78,6 +85,7 @@ METHOD_CLASSES = {
     'dpcore': DPCore,
     # Continual TTA (naive: no reset)
     'mlmp_continual': MLMPContinual,
+    'lcotta_mlmp_continual': LCoTTAMLMPContinual,
     'tent_continual': TENTContinual,
     # Continual TTA with cross-modal alignment loss (proposed Direction 1)
     'cma_continual': CMAContinual,
@@ -157,6 +165,7 @@ METHOD_CLASSES = {
     'deyo_uaml_continual': DeYOUAMLContinual,
     # DeYO adapt loss + MLMP multi-prompt + multi-layer + UAML eval (full)
     'deyo_mlmp_continual': DeYOMLMPContinual,
+    'deyo_mlmp_divloss_continual': DeYOMLMPDivLossContinual,
     # EATA (Efficient Anti-forgetting TTA, ICML 2022): reliable+non-redundant
     # sample selection + Fisher (EWC) anti-forgetting regularizer
     'eata_continual': EATAContinual,
@@ -175,6 +184,15 @@ METHOD_CLASSES = {
     'deyo_mlmp_divreg_continual': DeYOMLMPDivRegContinual,
     'shot_continual': SHOTContinual,
     'deyo_mlmp_divreg_composite_continual': DeYOMLMPDivRegCompositeContinual,
+    # DeYO + MLMP + grad-ANCHOR gate (restore toward best-state=grad-min, rst ~ slope)
+    'deyo_mlmp_gradanchor_continual': DeYOMLMPGradAnchorContinual,
+    # DeYO + MLMP + ADAPTIVE-lag gate (method1: lag~slope, capped at grad-min distance)
+    'deyo_mlmp_gradlagadapt_continual': DeYOMLMPGradLagAdaptContinual,
+    # DeYO + MLMP + grad-RATIO gate (proposed: EMA-grad/min ratio trigger, anchor restore)
+    'deyo_mlmp_gradratio_continual': DeYOMLMPGradRatioContinual,
+    # DeYO + MLMP + H-MARGIN-regime gate (method1 deep cap unlocked only when H_margin drops)
+    'deyo_mlmp_hmgate_continual': DeYOMLMPHMGateContinual,
+    'deyo_mlmp_hmgate2_continual': DeYOMLMPHMGate2Continual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)

@@ -118,6 +118,19 @@ def argparser():
     )
     parser.add_argument('--subset_seed', type=int, default=0,
                         help='Seed for --subset_size sampling')
+    # --- analysis experiments (opt-in; default behaviour unchanged) ---
+    parser.add_argument(
+        '--ood_corruptions', nargs='+', type=str, default=None,
+        help=('Analysis: per round, after adapting on --corruptions_list, also run a '
+              'FROZEN-weight evaluation on these held-out corruptions (no adapt). '
+              'Produces results_ood.txt — an OOD generalization curve. If it trends '
+              'like the in-distribution curve, adaptation is improving the model '
+              'overall rather than fitting the training corruptions.'))
+    parser.add_argument(
+        '--resample_subset', action='store_true',
+        help=('Analysis: re-draw a fresh random --subset_size subset every (round, '
+              'corruption) instead of a fixed one. Tests whether the method overfits '
+              'to the specific 100 images. Effective seed = subset_seed + 1000*round + cond_idx.'))
     parser.add_argument(
         '--acdc_overlay_corruptions', nargs='+', type=str, default=None,
         help=(
@@ -248,6 +261,18 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
         parser.add_argument('--prompt_integration', type=str, default='loss')
         parser.add_argument('--alpha_cls', type=float, default=1.0)
+
+    # --- LCoTTA + MLMP: MLMP loss + subspace-projected gradient update ---
+    elif method == 'lcotta_mlmp_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=1.0)
+        parser.add_argument('--w_num', type=int, default=100,
+                            help='LCoTTA moving window size (gradient vectors kept)')
+        parser.add_argument('--n_components', type=int, default=20,
+                            help='LCoTTA PCA components = subspace dimension')
+        parser.add_argument('--batch_step', type=int, default=50,
+                            help='record a gradient every this many batches')
 
     elif method == 'mlmp_topk_continual':
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
@@ -392,7 +417,7 @@ def add_method_specific_args(parser, method):
                             help='Number of trailing ViT blocks excluded (default 6)')
 
     # --- DeYO + multi-layer adapt + UAML eval (single-prompt / full-MLMP) ---
-    elif method in ('deyo_uaml_continual', 'deyo_mlmp_continual'):
+    elif method in ('deyo_uaml_continual', 'deyo_mlmp_continual', 'deyo_mlmp_divloss_continual'):
         parser.add_argument('--vision_outputs', nargs='+', type=int,
                             default=tuple(range(-1, -19, -1)))
         parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
@@ -404,6 +429,9 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--reweight_ent', type=int, default=1)
         parser.add_argument('--reweight_plpd', type=int, default=1)
         parser.add_argument('--top_block_exclude', type=int, default=6)
+        if method == 'deyo_mlmp_divloss_continual':
+            parser.add_argument('--lambda_div', type=float, default=0.5,
+                                help='weight of the marginal-diversity loss term (-lambda*H_margin)')
 
     # --- DeYO + MLMP + Diversity Regularizer (loss-side) ---
     elif method == 'deyo_mlmp_divreg_continual':
@@ -568,6 +596,123 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--max_lag', type=int, default=3000)
         parser.add_argument('--base_rst', type=float, default=0.01,
                             help='restore prob when gate is active')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP grad-ANCHOR gate (restore toward best-state, rst ~ slope) ---
+    elif method == 'deyo_mlmp_gradanchor_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--slope_window', type=int, default=10)
+        parser.add_argument('--slope_deadzone', type=float, default=0.002)
+        parser.add_argument('--rst_gain', type=float, default=2.0,
+                            help='rst = clamp(rst_gain * slope, 0, max_rst)')
+        parser.add_argument('--max_rst', type=float, default=0.1,
+                            help='cap on restore prob toward the best-state anchor')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP ADAPTIVE-lag gate (method1: lag capped at grad-min distance) ---
+    elif method == 'deyo_mlmp_gradlagadapt_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--slope_window', type=int, default=10)
+        parser.add_argument('--slope_deadzone', type=float, default=0.002)
+        parser.add_argument('--lag_gain', type=float, default=1500.0,
+                            help='lag(windows) = lag_gain * slope, capped at grad-min distance')
+        parser.add_argument('--base_rst', type=float, default=0.01)
+        parser.add_argument('--max_windows', type=int, default=2000)
+        parser.add_argument('--slope_unlock', type=float, default=0.0,
+                            help='slope < this -> shallow cap (maxlag_shallow); '
+                                 '>= this -> adaptive deep cap. 0 = always deep (pure method1)')
+        parser.add_argument('--maxlag_shallow', type=int, default=6,
+                            help='shallow lag cap in windows (6w=300batch) for the gentle regime')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP grad-RATIO gate (proposed: EMA-grad/min ratio trigger) ---
+    elif method == 'deyo_mlmp_gradratio_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--grad_ema_alpha', type=float, default=0.99,
+                            help='EMA decay for grad_norm smoothing (noise immunity)')
+        parser.add_argument('--trigger_ratio', type=float, default=1.1,
+                            help='restore when g_ema/g_min exceeds this (relative rise)')
+        parser.add_argument('--rst_gain', type=float, default=0.15,
+                            help='rst = clamp(rst_gain*(r - trigger_ratio), 0, max_rst)')
+        parser.add_argument('--max_rst', type=float, default=0.1)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP H-MARGIN-regime gate (method1, deep cap gated by H_margin drop) ---
+    elif method == 'deyo_mlmp_hmgate_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--slope_window', type=int, default=10)
+        parser.add_argument('--slope_deadzone', type=float, default=0.002)
+        parser.add_argument('--lag_gain', type=float, default=1500.0)
+        parser.add_argument('--base_rst', type=float, default=0.01)
+        parser.add_argument('--max_windows', type=int, default=2000)
+        parser.add_argument('--h_drop_ratio', type=float, default=0.9,
+                            help='collapse regime when windowed H_margin < this * running-max H '
+                                 '-> deep cap; else shallow cap (preserve climb)')
+        parser.add_argument('--maxlag_shallow', type=int, default=6)
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP HMGate2: deep restore -> PERMANENT best anchor (never evicted) ---
+    elif method == 'deyo_mlmp_hmgate2_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--slope_window', type=int, default=10)
+        parser.add_argument('--slope_deadzone', type=float, default=0.002)
+        parser.add_argument('--lag_gain', type=float, default=1500.0)
+        parser.add_argument('--base_rst', type=float, default=0.01)
+        parser.add_argument('--max_windows', type=int, default=2000)
+        parser.add_argument('--h_drop_ratio', type=float, default=0.9,
+                            help='collapse regime when windowed H_margin < this * running-max H '
+                                 '-> deep restore toward PERMANENT best anchor')
+        parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
@@ -952,14 +1097,14 @@ def add_method_specific_args(parser, method):
     return parser
 
 
-def save_round_results(all_round_results, save_dir, conditions):
+def save_round_results(all_round_results, save_dir, conditions, filename="results_all_rounds.txt"):
     """
     Write a summary table matching CoTTA Table 5 format.
 
-    Output: save_dir/results_all_rounds.txt
+    Output: save_dir/<filename>
     Columns: Round | fog | night | rain | snow | Mean
     """
-    summary_path = os.path.join(save_dir, "results_all_rounds.txt")
+    summary_path = os.path.join(save_dir, filename)
 
     header = "Round, " + ", ".join(conditions) + ", Mean_mIoU"
     lines = [header]
@@ -1095,6 +1240,7 @@ def main(args):
         del src_loader
 
     all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}
+    all_ood_results = {}     # round_num → {ood_corruption → metrics} (--ood_corruptions)
     headers = "mIoU, mDice, mAcc"
 
     # ----------------------------------------------------------------
@@ -1163,6 +1309,11 @@ def main(args):
                         f"must match --corruptions_list length ({len(conditions)})")
                 _overlay = args.acdc_overlay_corruptions[cond_idx]
 
+            # Analysis (--resample_subset): fresh random subset each (round, cond).
+            _subset_seed = args.subset_seed
+            if args.resample_subset:
+                _subset_seed = args.subset_seed + 1000 * round_num + cond_idx
+
             data_loader, _ = segmentation_datasets.prepare_data(
                 args.dataset, args.data_dir, args.init_resize,
                 args.patch_size, args.patch_stride,
@@ -1172,7 +1323,7 @@ def main(args):
                 ann_file=args.ann_file,
                 split=args.split,
                 subset_size=args.subset_size,
-                subset_seed=args.subset_seed,
+                subset_seed=_subset_seed,
                 corruption_severity=args.corruption_severity,
                 acdc_overlay_corruption=_overlay,
             )
@@ -1301,6 +1452,53 @@ def main(args):
                     f"{metrics['mDice']:.4f} +/- 0.0000, "
                     f"{metrics['mAcc']:.4f} +/- 0.0000\n"
                 )
+
+        # ----------------------------------------------------------
+        # Analysis (--ood_corruptions): frozen-weight eval on held-out
+        # corruptions, AFTER this round's adaptation. No adapt, no state change.
+        # ----------------------------------------------------------
+        if args.ood_corruptions:
+            ood_results = {}
+            for ood_cond in args.ood_corruptions:
+                ood_loader, _ = segmentation_datasets.prepare_data(
+                    args.dataset, args.data_dir, args.init_resize,
+                    args.patch_size, args.patch_stride,
+                    corruption=ood_cond,
+                    batch_size=args.batch_size, num_workers=args.workers,
+                    shuffle=False, split=args.split,
+                    subset_size=args.subset_size, subset_seed=args.subset_seed,
+                    corruption_severity=args.corruption_severity,
+                )
+                ood_res = []
+                for data in ood_loader:
+                    inputs = data['img_patches'].to(device, non_blocking=True)
+                    with torch.no_grad():
+                        patch_preds = adapt_method.evaluate(inputs)   # FROZEN
+                    if args.init_resize:
+                        rec = aggregate_pred_patches(
+                            patch_preds, data['meta']['patch_grid_shape'],
+                            data['meta']['img_shape'], args.patch_size, args.patch_stride)
+                    else:
+                        rec = patch_preds
+                    for pd, gt in zip(rec, data['gt']):
+                        pd = pd.softmax(dim=0)
+                        if args.class_extensions and ood_loader.dataset.class_extensions is not None:
+                            ext_to_real = torch.Tensor(
+                                ood_loader.dataset.extentions_to_real_class_idx
+                            ).to(torch.int64).to(device)
+                            num_cls = max(ext_to_real) + 1
+                            num_queries = len(ext_to_real)
+                            ext_oh = torch.nn.functional.one_hot(ext_to_real).T.view(
+                                num_cls, num_queries, 1, 1)
+                            pd = (pd.unsqueeze(0) * ext_oh).max(1)[0]
+                        pd = pd.argmax(dim=0).to(gt.device)
+                        ood_res.append(intersect_and_union(pd, gt[0], num_org_classes, ignore_index))
+                ood_metrics = process_metrics(ood_res, org_classes)
+                ood_results[ood_cond] = ood_metrics
+                print(f"  Rd {round_num:02d} | OOD {ood_cond:5s}: mIoU={ood_metrics['mIoU']:.2f}")
+            all_ood_results[round_num] = ood_results
+            save_round_results(all_ood_results, args.save_dir, args.ood_corruptions,
+                               filename="results_ood.txt")
 
         # Round summary
         mean_miou = np.mean([v['mIoU'] for v in round_results.values()])
