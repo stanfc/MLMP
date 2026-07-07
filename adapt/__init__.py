@@ -60,6 +60,9 @@ from .deyo_mlmp_gradpen_divgate_continual import DeYOMLMPGradPenDivGateContinual
 from .deyo_mlmp_smooth_anchor_continual import DeYOMLMPSmoothAnchorContinual
 from .deyo_mlmp_composite_gate_continual import DeYOMLMPCompositeGateContinual
 from .deyo_mlmp_gradslope_continual import DeYOMLMPGradSlopeContinual
+from .deyo_mlmp_divreg_continual import DeYOMLMPDivRegContinual
+from .shot_continual import SHOTContinual
+from .deyo_mlmp_divreg_composite_continual import DeYOMLMPDivRegCompositeContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
@@ -169,6 +172,9 @@ METHOD_CLASSES = {
     'deyo_mlmp_composite_gate_continual': DeYOMLMPCompositeGateContinual,
     # DeYO + MLMP + grad_norm-SLOPE gate (rising grad -> lagged restore, lag ~ slope)
     'deyo_mlmp_gradslope_continual': DeYOMLMPGradSlopeContinual,
+    'deyo_mlmp_divreg_continual': DeYOMLMPDivRegContinual,
+    'shot_continual': SHOTContinual,
+    'deyo_mlmp_divreg_composite_continual': DeYOMLMPDivRegCompositeContinual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)

@@ -16,6 +16,15 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 _n_intra = int(os.environ.get('OMP_NUM_THREADS', '4'))
 torch.set_num_threads(_n_intra)
 torch.set_num_interop_threads(min(2, _n_intra))
+# OpenCV defaults to one thread per core (~256). Forked DataLoader workers each
+# try to spawn that pool; under many concurrent experiments this exhausts the
+# per-user thread limit (ulimit -u) and kills workers with "Can't spawn new
+# thread (res=11)". Cap it (must be set before DataLoader workers fork).
+try:
+    import cv2
+    cv2.setNumThreads(int(os.environ.get('OPENCV_NUM_THREADS', '2')))
+except Exception:
+    pass
 import numpy as np
 from tqdm import tqdm
 
@@ -396,6 +405,33 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--reweight_plpd', type=int, default=1)
         parser.add_argument('--top_block_exclude', type=int, default=6)
 
+    # --- DeYO + MLMP + Diversity Regularizer (loss-side) ---
+    elif method == 'deyo_mlmp_divreg_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--lambda_div', type=float, default=0.0,
+                            help='Weight of the -H_margin diversity term added '
+                                 'to the DeYO loss. 0 = bit-identical to '
+                                 'deyo_mlmp_continual.')
+
+    # --- SHOT (Information-Maximization loss) continual baseline ---
+    elif method == 'shot_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--lambda_div', type=float, default=1.0,
+                            help="Weight of SHOT's diversity term L_div in "
+                                 "L = L_ent - lambda_div*L_div. SHOT default 1.0.")
+
     # --- DeYO + MLMP + DivGate ---
     elif method == 'deyo_mlmp_divgate_continual':
         parser.add_argument('--vision_outputs', nargs='+', type=int,
@@ -484,6 +520,28 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--grad_mult_max', type=float, default=4.0,
                             help='max multiplier on base_rst as grad_norm rises '
                                  'above its trigger baseline')
+        parser.add_argument('--monitor_interval', type=int, default=50)
+
+    # --- DeYO+MLMP DivReg loss + COMPOSITE gate (combined method) ---
+    elif method == 'deyo_mlmp_divreg_composite_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--lambda_div', type=float, default=0.3,
+                            help='diversity term weight in L_DeYO - lambda_div*H_margin')
+        parser.add_argument('--conf_ceil', type=float, default=0.80,
+                            help='mean_conf trigger (RE-CALIBRATE for divreg: '
+                                 'diversity lowers mean_conf)')
+        parser.add_argument('--base_rst', type=float, default=0.005)
+        parser.add_argument('--grad_mult_max', type=float, default=4.0)
         parser.add_argument('--monitor_interval', type=int, default=50)
 
     # --- DeYO+MLMP grad_norm-SLOPE gate (rising grad -> lagged restore) ---

@@ -8,6 +8,13 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 _n_intra = int(os.environ.get('OMP_NUM_THREADS', '4'))
 torch.set_num_threads(_n_intra)
 torch.set_num_interop_threads(min(2, _n_intra))
+# Cap OpenCV threads (defaults to ~#cores); prevents forked DataLoader workers
+# from exhausting ulimit -u under many concurrent experiments. See main_continual.py.
+try:
+    import cv2
+    cv2.setNumThreads(int(os.environ.get('OPENCV_NUM_THREADS', '2')))
+except Exception:
+    pass
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
