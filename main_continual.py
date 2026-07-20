@@ -692,7 +692,7 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--monitor_interval', type=int, default=50)
 
     # --- DeYO+MLMP HMGate2: deep restore -> PERMANENT best anchor (never evicted) ---
-    elif method == 'deyo_mlmp_hmgate2_continual':
+    elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual'):
         parser.add_argument('--vision_outputs', nargs='+', type=int,
                             default=tuple(range(-1, -19, -1)))
         parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
@@ -714,6 +714,17 @@ def add_method_specific_args(parser, method):
                                  '-> deep restore toward PERMANENT best anchor')
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
+        if method == 'deyo_mlmp_promptw_hmgate2_continual':
+            # entropy-weighted prompt aggregation (prompt/text-template axis)
+            parser.add_argument('--prompt_weight_beta', type=float, default=0.0,
+                                help='adapt-side: w^t = softmax(-beta*h^t) over templates. '
+                                     '0 = bit-identical GDG-PA (uniform).')
+            parser.add_argument('--eval_prompt_mode', type=str, default='avg_embed',
+                                choices=['avg_embed', 'ent_weight'],
+                                help="avg_embed = GDG-PA original eval; ent_weight = "
+                                     "entropy-weighted logit ensemble over templates.")
+            parser.add_argument('--eval_prompt_beta', type=float, default=1.0,
+                                help='eval-side beta for ent_weight mode.')
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
     elif method == 'dat_continual':

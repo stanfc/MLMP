@@ -1,0 +1,13 @@
+# S3 — STREET / DRIVING DOMAIN (N=7). Templates frame every class inside a
+# driving / urban-street context (matches ACDC & Cityscapes; OFF-domain for VOC).
+# Hypothesis: domain-matched framing tightens the text anchor for street classes
+# (road, sidewalk, car, ...) and lifts quality. VOC contrast tells us whether the
+# effect is domain-specific or generic.
+prompt_templates:
+  - "a street scene with a {}."
+  - "a driving photo of a {}."
+  - "a dashcam photo of a {}."
+  - "a photo of a {} on the road."
+  - "a photo of a {} in a city street."
+  - "a photo of a {} in an urban scene."
+  - "a photo of a {} from a car."

@@ -70,6 +70,7 @@ from .deyo_mlmp_gradlagadapt_continual import DeYOMLMPGradLagAdaptContinual
 from .deyo_mlmp_gradratio_continual import DeYOMLMPGradRatioContinual
 from .deyo_mlmp_hmgate_continual import DeYOMLMPHMGateContinual
 from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
+from .deyo_mlmp_promptw_hmgate2_continual import DeYOMLMPPromptWHMGate2Continual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
@@ -193,6 +194,8 @@ METHOD_CLASSES = {
     # DeYO + MLMP + H-MARGIN-regime gate (method1 deep cap unlocked only when H_margin drops)
     'deyo_mlmp_hmgate_continual': DeYOMLMPHMGateContinual,
     'deyo_mlmp_hmgate2_continual': DeYOMLMPHMGate2Continual,
+    # GDG-PA + entropy-weighted prompt aggregation (adapt-side and/or eval-side)
+    'deyo_mlmp_promptw_hmgate2_continual': DeYOMLMPPromptWHMGate2Continual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)

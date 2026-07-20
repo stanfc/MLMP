@@ -1,0 +1,12 @@
+# S7 — GENERIC PHOTO ENSEMBLE (N=7). Neutral, dataset-agnostic photographic
+# templates. Serves two roles: (a) a clean generic control sitting between S1
+# (minimal) and the domain sets; (b) the natural "in-domain" set for VOC20, whose
+# domain is generic natural objects rather than driving scenes.
+prompt_templates:
+  - "a photo of a {}."
+  - "a good photo of a {}."
+  - "a natural photo of a {}."
+  - "a photo of many {}."
+  - "a bright photo of a {}."
+  - "a clear photo of a {}."
+  - "a photo of a single {}."

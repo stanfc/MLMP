@@ -1,0 +1,13 @@
+# S5 — STREET + WEATHER combined (N=7). Cross of S3 (driving domain) and S4
+# (adverse weather): every template is both a street/driving context AND an adverse
+# condition. Hypothesis: best-of-both for ACDC — the anchor is aligned with the
+# actual data distribution (driving scenes under adverse weather). Doubly OFF-domain
+# for VOC (expect it to be worst-or-near-worst there).
+prompt_templates:
+  - "a driving photo of a {} in foggy weather."
+  - "a street scene with a {} at night."
+  - "a dashcam photo of a {} in the rain."
+  - "a photo of a {} on the road in the snow."
+  - "a photo of a {} in a city street at night."
+  - "a driving scene of a {} in bad weather."
+  - "a photo of a {} on the road in low light."

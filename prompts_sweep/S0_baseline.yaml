@@ -1,0 +1,11 @@
+# S0 — BASELINE (control). The current prompts.yaml (7 CLIP-generic templates).
+# Design rationale: reference point. A mix of photographic + artistic/stylistic
+# templates inherited from the NA-CLIP/MLMP paper's generic-OVSS setting.
+prompt_templates:
+  - "itap of a {}"
+  - "a bad photo of the {}."
+  - "a origami {}."
+  - "a photo of the large {}."
+  - "a {} in a video game."
+  - "art of the {}."
+  - "a photo of the small {}."

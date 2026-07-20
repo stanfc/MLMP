@@ -1,0 +1,18 @@
+# S6 — RICH DESCRIPTIVE ENSEMBLE (N=12). The COUNT axis: a larger ensemble mixing
+# S2 photographic + S3 driving templates. Hypothesis: more good templates keep
+# averaging noise down and lift quality further. NOTE: N=12 raises adapt cost
+# (adapt runs one forward per template), so this also probes the compute/quality
+# tradeoff. If S6 does not beat the N=7 domain sets, ensemble size has saturated.
+prompt_templates:
+  - "a photo of a {}."
+  - "a bad photo of a {}."
+  - "a close-up photo of a {}."
+  - "a cropped photo of a {}."
+  - "a photo of the large {}."
+  - "a photo of the small {}."
+  - "a street scene with a {}."
+  - "a driving photo of a {}."
+  - "a dashcam photo of a {}."
+  - "a photo of a {} on the road."
+  - "a photo of a {} in a city street."
+  - "a photo of a {} from a car."

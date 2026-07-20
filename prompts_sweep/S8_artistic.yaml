@@ -1,0 +1,12 @@
+# S8 — ARTISTIC / STYLISTIC (N=7) — NEGATIVE CONTROL. Deliberately off-domain:
+# every template renders the class as art, not a real scene. Hypothesis: this
+# should be the WORST set. Its purpose is a sanity check — if S8 underperforms S0
+# and the domain sets, it proves the domain axis is a real effect, not run noise.
+prompt_templates:
+  - "an origami {}."
+  - "art of the {}."
+  - "a {} in a video game."
+  - "a painting of a {}."
+  - "a sketch of a {}."
+  - "a cartoon {}."
+  - "a drawing of a {}."

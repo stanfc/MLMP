@@ -1,0 +1,12 @@
+# S2 — PHOTOGRAPHIC-CLEAN (N=7). Same count as S0, but every artistic/stylistic
+# template (origami / video game / art) removed and replaced by photographic ones.
+# Hypothesis: the off-domain artistic templates in S0 are injecting noise; a pure
+# photographic ensemble of the same size should already beat S0.
+prompt_templates:
+  - "a photo of a {}."
+  - "a bad photo of a {}."
+  - "a cropped photo of a {}."
+  - "a close-up photo of a {}."
+  - "a photo of the large {}."
+  - "a photo of the small {}."
+  - "a photo of one {}."

@@ -1,0 +1,5 @@
+# S1 — MINIMAL (N=1). One canonical template only.
+# Hypothesis: does the 7-template ensemble add anything at all? If S1 ties S0,
+# the ensemble is dead weight and the win must come from CONTENT, not count.
+prompt_templates:
+  - "a photo of a {}."
