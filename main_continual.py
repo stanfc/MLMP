@@ -692,7 +692,8 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--monitor_interval', type=int, default=50)
 
     # --- DeYO+MLMP HMGate2: deep restore -> PERMANENT best anchor (never evicted) ---
-    elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual'):
+    elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual',
+                    'deyo_mlmp_textres_hmgate2_continual', 'deyo_mlmp_adagate_continual'):
         parser.add_argument('--vision_outputs', nargs='+', type=int,
                             default=tuple(range(-1, -19, -1)))
         parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
@@ -714,6 +715,29 @@ def add_method_specific_args(parser, method):
                                  '-> deep restore toward PERMANENT best anchor')
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
+        if method == 'deyo_mlmp_adagate_continual':
+            # self-calibrating trigger (A) and lag (B); see the module docstring for
+            # why the absolute slope_deadzone / lag_gain are inert in hmgate2.
+            parser.add_argument('--trend_stat', type=str, default='mad',
+                                choices=['abs', 'rel', 'mad', 'tstat'],
+                                help="normalisation of the grad-norm OLS slope before the "
+                                     "deadzone test. 'abs' = hmgate2 (raw slope); 'mad' = "
+                                     "robust z vs recent slope spread; 'tstat' = slope/SE; "
+                                     "'rel' = slope/grad_norm.")
+            parser.add_argument('--trend_thr', type=float, default=0.5,
+                                help='unitless deadzone on the normalised trend z. Ignored '
+                                     'for trend_stat=abs, which uses --slope_deadzone.')
+            parser.add_argument('--trend_hist', type=int, default=50,
+                                help='window count for the MAD scale and the ECDF rank.')
+            parser.add_argument('--lag_mode', type=str, default='ecdf',
+                                choices=['gain', 'sat', 'ecdf'],
+                                help="shallow-restore depth. 'gain' = hmgate2 "
+                                     "(round(lag_gain*slope), saturates in practice); "
+                                     "'sat' = ceil(cap*clamp(z/lag_sat)); 'ecdf' = "
+                                     "ceil(cap*rank(z)), tunable-free and scale-invariant.")
+            parser.add_argument('--lag_sat', type=float, default=1.5,
+                                help='z at which lag_mode=sat reaches the full budget.')
+
         if method == 'deyo_mlmp_promptw_hmgate2_continual':
             # entropy-weighted prompt aggregation (prompt/text-template axis)
             parser.add_argument('--prompt_weight_beta', type=float, default=0.0,
@@ -725,6 +749,16 @@ def add_method_specific_args(parser, method):
                                      "entropy-weighted logit ensemble over templates.")
             parser.add_argument('--eval_prompt_beta', type=float, default=1.0,
                                 help='eval-side beta for ent_weight mode.')
+        if method == 'deyo_mlmp_textres_hmgate2_continual':
+            # learnable text-embedding residual + orthogonality regularizer
+            parser.add_argument('--text_res_lr', type=float, default=0.0,
+                                help='LR for the (C,D) text residual. '
+                                     '0 = no residual created = bit-identical GDG-PA.')
+            parser.add_argument('--lambda_orth', type=float, default=0.0,
+                                help='weight of the off-diagonal cosine penalty on the '
+                                     'class text vectors. No effect unless text_res_lr>0.')
+            parser.add_argument('--text_res_max_norm', type=float, default=0.5,
+                                help='per-class L2 cap on the residual (0 = uncapped).')
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
     elif method == 'dat_continual':

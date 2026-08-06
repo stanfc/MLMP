@@ -1184,4 +1184,105 @@ base_rst 0.01>0.02. **Important:** we only swept the insensitive axis — our ru
 
 ---
 
+## 19. Phase S: AdaGate — GDG-PA's two inert hyperparameters made self-calibrating (2026-08-02 → 08-05)
+
+Spec: **[docs/adagate_continual_spec.md](adagate_continual_spec.md)**. Method
+`adapt/deyo_mlmp_adagate_continual.py`; sweep `bash/sweep_adagate.sh`; collector
+`scripts/collect_adagate.py`. Report artifact (updated, 3 datasets):
+https://claude.ai/code/artifact/526949a9-3ccd-435d-a27a-eb5833788f91
+
+### S-1. The diagnosis — two hyperparameters that measurably do nothing
+
+Motivating question from the user: can GDG-PA's thresholds be made *adaptive*, for a better
+paper framing? Measurement on `save/*/hmgate2_prompt_S0_baseline/gate_log.csv` found that
+**two of them were already inert**, so making them adaptive *removes* tunables rather than
+adding any:
+
+- **(A) `slope_deadzone = 0.002`** is meant to reject noise-level grad-norm rises, but the
+  slope noise band is ±0.03 (ACDC) / ±0.35 (VOC20) — 15× / 150× larger. It degenerates to
+  `slope > 0`: firing 0.463 / 0.507 vs `P(slope>0)` ≈ 0.5. It filters nothing, and it is an
+  absolute constant applied to two slope distributions 10× apart in scale.
+- **(B) `lag_gain = 1500`** is meant to scale restore depth continuously with degradation
+  speed, but saturates the cap whenever `slope > 6/1500 = 0.004` — true in **93.2 %** (ACDC)
+  / **99.7 %** (VOC20) of active windows. Realised lag is binary: ACDC `{0:322, 6:162}`,
+  VOC20 `{0:741, 6:709}`. Spreading lag over 1..6 would need `lag_gain ≈ 153` (ACDC) vs
+  `≈ 17` (VOC20) — a 9× gap, so **no single absolute gain can work**.
+
+Both pathologies reproduce independently on **Cityscapes** (`ctrl` fires 0.479, `graded` 0.02).
+
+### S-2. The fix
+
+- **(A) `trend_stat`**: normalise the OLS slope before thresholding. `mad` = robust z-score
+  `slope / (1.4826·MAD(last 50 slopes))`; also `tstat` = `slope/SE(slope)`, `rel` =
+  `slope/grad_norm`, `abs` = hmgate2. `trend_thr` becomes a unitless SNR deadzone.
+- **(B) `lag_mode`**: restore depth as a **fraction of the budget**, `lag = ceil(cap·u)`.
+  `ecdf` sets `u` = rank of z among the last 50 *active* z — rank-based, hence invariant to
+  any monotone rescaling of the trend statistic and **free of tunables** (`lag_gain` deleted).
+  `sat` uses `u = clamp(z/lag_sat)`; `gain` is hmgate2.
+
+**Equivalence verified**: `trend_stat=abs, lag_mode=gain` consumes no extra RNG and reproduced
+`hmgate2_prompt_S0_baseline` to every mIoU digit over 3 ACDC rounds and on all 12 gate windows.
+This is what licenses attributing every delta to A/B.
+
+**Negative result worth reporting**: the intuitive `slope/grad_norm` normalisation is
+**insufficient** — ACDC p90 0.005 vs VOC20 0.042, still 8× apart, because it normalises the
+signal's *magnitude* (5.25 vs 6.64, 1.3×) not its *noise level* (11×). `mad` gives 1.125 vs
+1.114 (1.01×).
+
+### S-3. Results — 19 runs × 150R × 3 datasets
+
+| arm | ACDC (Δ) | VOC20 (Δ) | Cityscapes (Δ) |
+|---|---|---|---|
+| GDG-PA / `ctrl` | 31.06 | 77.11 | 23.85 |
+| `Becdf` (B only) | 31.02 (−0.04) | **77.56 (+0.45)** | — |
+| `Amad0` (A only, matched firing) | 31.03 (−0.03) | — | — |
+| **`ABmad05_ecdf`** ← **recommended** | **31.31 (+0.25)** | **77.80 (+0.69)** | **23.97 (+0.12)** |
+| `ABmad10_ecdf` | 31.68 (+0.62) | 77.90 (+0.79) | **23.74 (−0.10)** |
+| `ABmad15_ecdf` | 31.81 (+0.74) | — | — |
+| `ABmad20_ecdf` | 32.12 (+1.06) | — | — |
+| `ABtstat10_ecdf` | 32.07 (+1.01) | 77.84 (+0.73) | 23.91 (+0.07) |
+
+1. **B is fixed and matters on its own in the uniform-drift regime.** `graded` goes 0.02–0.07
+   → 0.60–0.83. `Becdf` (B alone, trigger untouched) earns **+0.45 on VOC20**, where the
+   collapse regime never fires so 100 % of restores take the lag path.
+2. **A is the ACDC lever and shows GDG-PA was over-restoring.** Firing 0.51→31.03,
+   0.32→31.16, 0.16→31.62, 0.035→32.12.
+3. **The two fixes are complementary, one per regime.** On ACDC, B alone does nothing
+   (−0.04) and A-at-matched-firing does nothing (−0.03). Maps onto the existing
+   collapse-vs-uniform-degradation split (§4/§5, contribution doc §4).
+4. **Transferability is the decisive result** — firing rate under one unitless threshold:
+
+| threshold | ACDC | VOC20 | Cityscapes | spread | verdict |
+|---|---|---|---|---|---|
+| `mad 0.5` | 0.292 | 0.315 | 0.299 | **1.1×** | transfers |
+| `mad 1.0` | 0.167 | 0.155 | 0.105 | 1.6× | marginal |
+| `tstat 1.0` | 0.037 | 0.251 | 0.296 | **8.0×** | **does not transfer** |
+
+**`tstat`'s ACDC win was an artifact of accidentally firing at 3.7 % there**, not of the
+statistic being better: once VOC20/Cityscapes push its firing to 0.25–0.30 it matches
+`mad 0.5` (77.84 vs 77.80; 23.91 vs 23.97). **The statistic choice is not the lever;
+cross-dataset firing-rate stability is.** Do NOT frame `tstat` as a "significance test" in
+the paper — with a 10-point sliding window sharing 9/10 points, the series is heavily
+autocorrelated and the nominal t-distribution does not apply; call it a residual-scaled
+unitless trend strength.
+
+### S-4. Standing recommendation and open items
+
+**`ABmad05_ecdf`** (`trend_stat=mad, trend_thr=0.5, lag_mode=ecdf`) is the configuration to
+carry forward — the only arm positive on all three datasets with stable tails (peak→last
+−0.25 / −0.35 / −0.05). `mad 1.0` scores higher on ACDC/VOC20 *mean* but is **negative on
+Cityscapes** and decays −1.19 from peak on VOC20 (78.89@R84 → 77.70@R150). The ACDC-only
+monotone "lower firing is better" trend is **dataset-specific** — the inverted-U turns much
+earlier on Cityscapes.
+
+Open: **all runs are seed=0** (Cityscapes' +0.12 needs multi-seed); **`trend_hist=50` was
+never swept**; Cityscapes threshold bracket (mad 0.3 / 0.7) would locate its earlier turn.
+
+Honest cost accounting for the paper: 2 *scale-bound* thresholds deleted
+(`slope_deadzone`, `lag_gain`), 1 *scale-free* threshold introduced (`trend_thr`) plus 2
+structural sample-count parameters (`trend_hist=50`, MAD warm-up min 5) that do not need
+per-dataset calibration.
+
+---
+
 *End of research-arc document. For any detail not covered here, follow the reading map in §13.*

@@ -4,6 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
+> **🟩 Newest (2026-08-05, Phase S): `deyo_mlmp_adagate_continual` supersedes GDG-PA as the
+> configuration to carry forward.** GDG-PA's `slope_deadzone=0.002` and `lag_gain=1500` were
+> measured to be **inert** — the deadzone degenerates to `slope>0` (fires 46–51 % on all three
+> datasets), and lag saturates the cap in 93–99.7 % of active windows (realised lag is binary
+> `{0,6}`). AdaGate replaces both with unitless statistics: `trend_stat=mad` (robust z of the
+> slope vs its own recent spread) and `lag_mode=ecdf` (lag = rank of z within budget, which
+> **deletes `lag_gain` outright**). **Recommended config `ABmad05_ecdf`**
+> (`--trend_stat mad --trend_thr 0.5 --lag_mode ecdf`): ACDC **31.31 (+0.25)**, VOC20
+> **77.80 (+0.69)**, Cityscapes **23.97 (+0.12)** — the only arm positive on all three with
+> stable tails. `trend_thr=0.5` self-calibrates to firing 0.292/0.315/0.299 (spread 1.1×);
+> `tstat` does NOT transfer (0.037/0.251/0.296, spread 8.0×) so its ACDC +1.01 is an artifact.
+> `abs`+`gain` reproduces GDG-PA **bit-identically** (verified) — use it as the control arm.
+> Full arc: **[docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) §19**, spec
+> [docs/adagate_continual_spec.md](docs/adagate_continual_spec.md). Caveats: all seed=0;
+> `trend_hist=50` never swept.
+>
 > **🔀 Merged `origin/2026.06.04` (學長) on 2026-06-04**: brought in **36 new methods** (deyo/rotta/dat/kff baselines, CLIPArTT variants, MLMP topk/minprompt/smooth-anchor variants, TENT siggate/contgate/layered/anchor variants), a **2nd backbone CAT-Seg** (`ovss/catseg/`), **ACDCMerged3/6/10** class-merging datasets, universal `entropy_log.csv`, and new CLI (`--split train+val`, `--subset_size`, `--acdc_overlay_corruptions`, `--corruption_severity`). **None are in our research narrative yet — they are an unvalidated toolbox.** Full catalog + smooth-anchor explainer: **[docs/merged_2026-06-04_inventory.md](docs/merged_2026-06-04_inventory.md)**. Gotchas: needs `einops`; our old `--severity` is gone (use `--corruption_severity`); 55 methods / 293 scripts.
 >
 > **🟢 Current status (2026-05-25)**:
@@ -117,6 +133,7 @@ The full narrative — what each method tried, why it failed or partially worked
 | **`tent_divgate_continual`** | `adapt/tent_divgate_continual.py` | [tent_divgate_continual_spec.md](docs/tent_divgate_continual_spec.md) | **Best confirmed method. All 150R complete.** Baseline (h_thr=1.8): mean=30.14, R150=29.02. After cautious_rst sweep + threshold tune (h_thr=1.6, h_warn=1.4, cau_rst=0.01): **mean=31.59, peak=32.96@R27, R150=31.34**. Beats MLMP-episodic by +1.0 mIoU, stable to R150. |
 | `sar_continual` | `adapt/sar_continual.py` (+ `adapt/sam.py`) | [2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md) | **Ran, partial win.** ACDC (post-bug-fix not yet rerun; existing data is pre-fix `>` direction): mean=30.32, peak=33.38@R15, R150=25.31 — **higher peak than TENT-DivGate but W-shape dips at R50/R100/R150**. VOC20 weather: ~70.9 ≈ No-Adapt 70.79 (headroom-limited). **Direction bug**: recovery was `>` should be `<` per paper; `E_0` rescaled `0.7→0.1`. |
 | `eata_continual` | `adapt/eata_continual.py` | [2026-05-17-sar-eata-v20-design.md](docs/2026-05-17-sar-eata-v20-design.md) | **Implemented, never run** (deferred behind SAR results). Pre-stream Fisher EWC + reliable+non-redundant filter. |
+| **`deyo_mlmp_adagate_continual`** | `adapt/deyo_mlmp_adagate_continual.py` | [adagate_continual_spec.md](docs/adagate_continual_spec.md) | **Phase S — current recommendation.** GDG-PA with a self-calibrating trigger (`trend_stat`/`trend_thr`) and lag (`lag_mode`). Best arm `ABmad05_ecdf`: ACDC 31.31 / VOC20 77.80 / Cityscapes 23.97, positive on all three. `abs`+`gain` = bit-identical GDG-PA. |
 | **`sar_divgate_continual`** | `adapt/sar_divgate_continual.py` | [sar_divgate_continual_spec.md](docs/sar_divgate_continual_spec.md) | **Implemented, NOT YET RUN (Phase J, next priority).** Hybrid: SAR's SAM + reliable filter, with DivGate's 3-tier graded stochastic restore replacing SAR's hard recovery. Hypothesis: SAM peak (33.38) + DivGate stability (R150 31.34) → ideal mean ≥ 32.5 on ACDC. |
 
 The original three-direction reframing is in [proposal_after_cma.md](proposal_after_cma.md) (written after CMA-Proto failed). Direction A = layered restoration; Direction B = diversity gate; Direction C (two-timescale meta-adapt) is still deferred.

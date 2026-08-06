@@ -71,6 +71,8 @@ from .deyo_mlmp_gradratio_continual import DeYOMLMPGradRatioContinual
 from .deyo_mlmp_hmgate_continual import DeYOMLMPHMGateContinual
 from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
 from .deyo_mlmp_promptw_hmgate2_continual import DeYOMLMPPromptWHMGate2Continual
+from .deyo_mlmp_textres_hmgate2_continual import DeYOMLMPTextResHMGate2Continual
+from .deyo_mlmp_adagate_continual import DeYOMLMPAdaGateContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
@@ -196,6 +198,10 @@ METHOD_CLASSES = {
     'deyo_mlmp_hmgate2_continual': DeYOMLMPHMGate2Continual,
     # GDG-PA + entropy-weighted prompt aggregation (adapt-side and/or eval-side)
     'deyo_mlmp_promptw_hmgate2_continual': DeYOMLMPPromptWHMGate2Continual,
+    # GDG-PA + learnable text-embedding residual + orthogonality regularizer
+    'deyo_mlmp_textres_hmgate2_continual': DeYOMLMPTextResHMGate2Continual,
+    # GDG-PA with self-calibrating trigger (normalised trend) + lag (budget fraction)
+    'deyo_mlmp_adagate_continual': DeYOMLMPAdaGateContinual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)
