@@ -1,40 +1,43 @@
 #!/bin/bash
-# GradDivGate (deyo_mlmp_hmgate2_continual) on CityscapesDataset — FULL val set (500 imgs),
-# ALL 15 ImageNet-C corruptions, h_drop_ratio=0.95, 50 rounds.
-# Full-benchmark counterpart of the sub100 run, to check the no-drop property at scale.
+# B3: ORACLE no-gate observation on PascalVOC20Dataset (5corr sub100).
+# base_rst=0.0 -> natural collapse (update uses entropy grad only), while logging
+# grad_norm/h_margin/collapse (gate_log.csv) AND cos(g_entropy, g_oracle) (oracle_log.csv)
+# every window, plus LN checkpoints (ln_ckpt/). Shows the grad_norm / oracle-direction
+# story generalizes beyond ACDC. LR 3e-5 (operating LR).
 
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=2
+GPU_ID=1
 
-DATASET=CityscapesDataset
-DATA_DIR=".data/cityscapes/"
-INIT_RESIZE="1120 560"
-CONDITIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+DATASET=PascalVOC20Dataset
+DATA_DIR=".data/VOC2012/"
+INIT_RESIZE="224 224"
+CONDITIONS="snow frost fog brightness contrast"
 WORKERS=0
 
-METHOD="deyo_mlmp_hmgate2_continual"
+METHOD="deyo_mlmp_hmgate2_oracle_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
 PROMPT_DIR="prompts.yaml"
 
 BATCH_SIZE=1
-LR=0.000005
+LR=0.00003
 STEPS=1
-CONTINUAL_ROUNDS=50
+CONTINUAL_ROUNDS=150
 
 SLOPE_WINDOW=10
 SLOPE_DEADZONE=0.002
 LAG_GAIN=1500
-BASE_RST=0.01
+BASE_RST=0.0          # <-- NO GATE: never restore
 H_DROP_RATIO=0.9
 MAXLAG_SHALLOW=6
 MONITOR_INTERVAL=50
+LN_CKPT_EVERY=2
 
-SAVE_DIR="save/${DATASET}/${METHOD}_full_15corr/"
+SAVE_DIR="save/${DATASET}/deyo_mlmp_hmgate2_oracle_nogate_5corr_sub100_lr3e-5/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -50,6 +53,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --patch_stride 112 \
                         --corruptions_list $CONDITIONS \
                         --workers $WORKERS \
+                        --subset_size 100 \
+                        --subset_seed 0 \
                         \
                         --lr $LR \
                         --steps $STEPS \
@@ -65,6 +70,8 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --h_drop_ratio $H_DROP_RATIO \
                         --maxlag_shallow $MAXLAG_SHALLOW \
                         --monitor_interval $MONITOR_INTERVAL \
+                        --ln_ckpt_every $LN_CKPT_EVERY \
+                        --log_oracle 1 \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

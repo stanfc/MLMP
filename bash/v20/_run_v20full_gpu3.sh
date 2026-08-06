@@ -1,17 +1,20 @@
 #!/bin/bash
-# GradDivGate (deyo_mlmp_hmgate2_continual) on CityscapesDataset — FULL val set (500 imgs),
-# ALL 15 ImageNet-C corruptions, h_drop_ratio=0.95, 50 rounds.
-# Full-benchmark counterpart of the sub100 run, to check the no-drop property at scale.
+# deyo_mlmp_hmgate2_continual on PascalVOC20Dataset — FULL val set, ALL 15 ImageNet-C corruptions.
+# Composite gate: mean_conf TRIGGER + grad_norm DEPTH. This is the KEY test —
+# H_margin is blind to VOC20's uniform degradation, but grad_norm tracks it and
+# mean_conf is monotone, so the composite should brake here too.
+# conf_ceil from observed mean_conf at the mIoU peak (VOC20 peak conf 0.732 @R59).
+# See docs/2026-06-18-contribution.md §7.
 
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=2
+GPU_ID=3
 
-DATASET=CityscapesDataset
-DATA_DIR=".data/cityscapes/"
-INIT_RESIZE="1120 560"
+DATASET=PascalVOC20Dataset
+DATA_DIR=".data/VOC2012/"
+INIT_RESIZE="224 224"
 CONDITIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
 WORKERS=0
 
@@ -24,8 +27,11 @@ PROMPT_DIR="prompts.yaml"
 BATCH_SIZE=1
 LR=0.000005
 STEPS=1
-CONTINUAL_ROUNDS=50
+CONTINUAL_ROUNDS=150
 
+# slope_window 10 (~500 batch) was too noisy on V20 -> false early triggering
+# capped the climb (peak only 75.0). 50 windows ~= 2500 batch (5 rounds) smooths
+# the medium-term trend so restore only fires on a real sustained grad rise.
 SLOPE_WINDOW=10
 SLOPE_DEADZONE=0.002
 LAG_GAIN=1500
@@ -68,11 +74,4 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions
-
-# --- notify phone when finished (ntfy.sh) ---
-STATUS=$?
-if [ $STATUS -eq 0 ]; then
-  bash notify.sh "✅ $(basename "$0") DONE | $(tail -1 "$SAVE_DIR/results_all_rounds.txt" 2>/dev/null)" "MLMP ✅"
-else
-  bash notify.sh "❌ $(basename "$0") FAILED (exit $STATUS)" "MLMP ❌"
-fi
+bash /home/stanfc/TTA-on-OVSS/MLMP/notify.sh "ViT-seg VOC20 full-15corr 150R 完成" "EXP5" 2>/dev/null || true

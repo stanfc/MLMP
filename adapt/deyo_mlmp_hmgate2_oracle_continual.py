@@ -33,6 +33,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as T
+import torch.nn.functional as F
 from einops import rearrange
 
 from ovss import load_ovss
@@ -41,7 +42,7 @@ from utils.misc import load_prompts_from_yaml, print_clip_parameters, print_opti
 REFERENCE_PROMPT = 'a photo of a {}'
 
 
-class DeYOMLMPHMGate2Continual:
+class DeYOMLMPHMGate2OracleContinual:
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
                  vision_outputs=tuple(range(-1, -19, -1)),
                  prompt_dir='prompts.yaml',
@@ -70,7 +71,7 @@ class DeYOMLMPHMGate2Continual:
                  h_drop_ratio=0.9,
                  maxlag_shallow=6,
                  monitor_interval=50,
-                 ln_ckpt_every=0,
+                 ln_ckpt_every=0, log_oracle=1,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
@@ -107,6 +108,11 @@ class DeYOMLMPHMGate2Continual:
         # feature analysis of the collapse trajectory). 0 = off.
         self.ln_ckpt_every = int(ln_ckpt_every)
         self._ckpt_win = 0
+        # oracle-direction diagnostic: compare the entropy gradient we USE
+        # against the GT-supervised gradient (reference only, no update change)
+        self.log_oracle = int(log_oracle)
+        self._oracle_gt = None
+        self._cos_buf = []
         # H_margin regime state
         self.marginal_buf = []
         self.h_max = 0.0
@@ -168,6 +174,12 @@ class DeYOMLMPHMGate2Continual:
             with open(self.gate_log_path, 'w') as _f:
                 _f.write("total_batches,grad_norm,grad_slope,h_margin,collapse,"
                          "windows_since_min,lag,rst,deep\n")
+        self.oracle_log_path = None
+        if save_dir and self.log_oracle:
+            self.oracle_log_path = os.path.join(save_dir, "oracle_log.csv")
+            with open(self.oracle_log_path, 'w') as _f:
+                _f.write("total_batches,grad_norm,cos_ent_oracle,"
+                         "g_ent_norm,g_oracle_norm,h_margin,collapse\n")
 
         with torch.no_grad():
             self.text_x = self.extract_text_embeddings(
@@ -196,6 +208,10 @@ class DeYOMLMPHMGate2Continual:
 
     def adapt(self, x):
         return self.perform_adaptation(x)
+
+    def set_oracle_labels(self, gt_patches):
+        # (B,1,H,W) patch-level GT aligned to x; stored for the next adapt step
+        self._oracle_gt = gt_patches.to(self.device)
 
     def continual_adapt(self, x):
         return self.perform_adaptation(x)
@@ -305,6 +321,35 @@ class DeYOMLMPHMGate2Continual:
                             if p.grad is not None:
                                 gn += float(p.grad.detach().float().pow(2).sum())
                         self.grad_buf.append(gn ** 0.5)
+                    # --- ORACLE reference gradient (diagnostic only; the real
+                    # update below still uses the entropy gradient) ---
+                    if self.log_oracle and self._oracle_gt is not None:
+                        ent_grads = {n: p.grad.detach().clone()
+                                     for n, p in self.named_ln_params
+                                     if p.grad is not None}
+                        g_ent = torch.cat([ent_grads[n].flatten().float()
+                                           for n, _ in self.named_ln_params
+                                           if n in ent_grads])
+                        self.optimizer.zero_grad()
+                        o_logits = self._adapt_forward(x)
+                        avg = o_logits.mean(dim=0)              # (B,C,h,w)
+                        _, _, h_, w_ = avg.shape
+                        tgt = F.interpolate(self._oracle_gt.float(),
+                                            size=(h_, w_), mode='nearest'
+                                            ).squeeze(1).long()  # (B,h,w)
+                        ce = F.cross_entropy(avg, tgt, ignore_index=255)
+                        ce.backward()
+                        g_or = torch.cat([p.grad.detach().flatten().float()
+                                          for n, p in self.named_ln_params
+                                          if n in ent_grads])
+                        cos = float(F.cosine_similarity(g_ent, g_or, dim=0))
+                        self._cos_buf.append(
+                            (cos, float(g_ent.norm()), float(g_or.norm())))
+                        # restore the entropy gradient for the real update
+                        self.optimizer.zero_grad()
+                        for n, p in self.named_ln_params:
+                            if n in ent_grads:
+                                p.grad = ent_grads[n]
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     if self.current_rst > 0.0 and self.current_lag > 0:
@@ -388,6 +433,15 @@ class DeYOMLMPHMGate2Continual:
                             'ln': snap},
                            os.path.join(self.ln_ckpt_dir,
                                         f"win_{self.total_batches:07d}.pt"))
+        if self.oracle_log_path is not None and len(self._cos_buf) > 0:
+            n = len(self._cos_buf)
+            cm = sum(c for c, _, _ in self._cos_buf) / n
+            em = sum(e for _, e, _ in self._cos_buf) / n
+            om = sum(o for _, _, o in self._cos_buf) / n
+            with open(self.oracle_log_path, 'a') as _f:
+                _f.write(f"{self.total_batches},{g:.6f},{cm:.6f},"
+                         f"{em:.6f},{om:.6f},{h_margin:.6f},{int(collapse_regime)}\n")
+            self._cos_buf.clear()
         self.current_lag = lag
         self.current_rst = rst
         self.current_deep = deep

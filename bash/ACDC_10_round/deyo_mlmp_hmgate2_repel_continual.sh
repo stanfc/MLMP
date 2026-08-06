@@ -1,21 +1,23 @@
 #!/bin/bash
-# GradDivGate (deyo_mlmp_hmgate2_continual) on CityscapesDataset — FULL val set (500 imgs),
-# ALL 15 ImageNet-C corruptions, h_drop_ratio=0.95, 50 rounds.
-# Full-benchmark counterpart of the sub100 run, to check the no-drop property at scale.
+# deyo_mlmp_hmgate2_repel_continual on ACDCDataset.
+# GDG-PA base + REPULSION text-align: push visual features AWAY from the top-k
+# most-confusable WRONG-class frozen text anchors on confident pixels. Uses the
+# inter-class text geometry (non-redundant with entropy, unlike attraction).
+# Compare against GDG-PA base (last 31.8) at the same LR 5e-6.
 
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export OPENCV_NUM_THREADS=2
 
-GPU_ID=2
+GPU_ID=1
 
-DATASET=CityscapesDataset
-DATA_DIR=".data/cityscapes/"
+DATASET=ACDCDataset
+DATA_DIR=".data/ACDC/"
 INIT_RESIZE="1120 560"
-CONDITIONS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+CONDITIONS="fog night rain snow"
 WORKERS=0
 
-METHOD="deyo_mlmp_hmgate2_continual"
+METHOD="deyo_mlmp_hmgate2_repel_continual"
 OVSS_TYPE="naclip"
 OVSS_BACKBONE="ViT-L/14"
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
@@ -24,7 +26,7 @@ PROMPT_DIR="prompts.yaml"
 BATCH_SIZE=1
 LR=0.000005
 STEPS=1
-CONTINUAL_ROUNDS=50
+CONTINUAL_ROUNDS=150
 
 SLOPE_WINDOW=10
 SLOPE_DEADZONE=0.002
@@ -34,7 +36,11 @@ H_DROP_RATIO=0.9
 MAXLAG_SHALLOW=6
 MONITOR_INTERVAL=50
 
-SAVE_DIR="save/${DATASET}/${METHOD}_full_15corr/"
+LAMBDA_REPEL=0.1
+TOP_K_ALIGN=0.2
+REPEL_K=3
+
+SAVE_DIR="save/${DATASET}/${METHOD}/"
 
 CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --adapt \
@@ -65,6 +71,9 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         --h_drop_ratio $H_DROP_RATIO \
                         --maxlag_shallow $MAXLAG_SHALLOW \
                         --monitor_interval $MONITOR_INTERVAL \
+                        --lambda_repel $LAMBDA_REPEL \
+                        --top_k_align $TOP_K_ALIGN \
+                        --repel_k $REPEL_K \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions

@@ -64,6 +64,19 @@ from .deyo_mlmp_gradlagadapt_continual import DeYOMLMPGradLagAdaptContinual
 from .deyo_mlmp_gradratio_continual import DeYOMLMPGradRatioContinual
 from .deyo_mlmp_hmgate_continual import DeYOMLMPHMGateContinual
 from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
+from .deyo_mlmp_hmgate2_emaeval_continual import DeYOMLMPHMGate2EmaEvalContinual
+from .deyo_mlmp_hmgate2_mseval_continual import DeYOMLMPHMGate2MSEvalContinual
+from .deyo_mlmp_hmgate2_distill_continual import DeYOMLMPHMGate2DistillContinual
+from .deyo_mlmp_hmgate2_textalign_continual import DeYOMLMPHMGate2TextAlignContinual
+from .deyo_mlmp_hmgate2_taconsensus_continual import DeYOMLMPHMGate2TAConsensusContinual
+from .deyo_mlmp_hmgate2_logitadj_continual import DeYOMLMPHMGate2LogitAdjContinual
+from .deyo_mlmp_hmgate2_ratchet_continual import DeYOMLMPHMGate2RatchetContinual
+from .deyo_mlmp_hmgate2_divloss_continual import DeYOMLMPHMGate2DivLossContinual
+from .deyo_mlmp_hmgate2_repel_continual import DeYOMLMPHMGate2RepelContinual
+from .deyo_mlmp_hmgate2_srcdistill_continual import DeYOMLMPHMGate2SrcDistillContinual
+from .deyo_mlmp_hmgate2_oracle_continual import DeYOMLMPHMGate2OracleContinual
+from .deyo_mlmp_hmgate2_distill_oracle_continual import DeYOMLMPHMGate2DistillOracleContinual
+from .mgp_deyo_mlmp_continual import MGPDeYOMLMPContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 
 # Map methods to their classes
@@ -182,6 +195,19 @@ METHOD_CLASSES = {
     # DeYO + MLMP + H-MARGIN-regime gate (method1 deep cap unlocked only when H_margin drops)
     'deyo_mlmp_hmgate_continual': DeYOMLMPHMGateContinual,
     'deyo_mlmp_hmgate2_continual': DeYOMLMPHMGate2Continual,
+    'deyo_mlmp_hmgate2_emaeval_continual': DeYOMLMPHMGate2EmaEvalContinual,
+    'deyo_mlmp_hmgate2_mseval_continual': DeYOMLMPHMGate2MSEvalContinual,
+    'deyo_mlmp_hmgate2_distill_continual': DeYOMLMPHMGate2DistillContinual,
+    'deyo_mlmp_hmgate2_textalign_continual': DeYOMLMPHMGate2TextAlignContinual,
+    'deyo_mlmp_hmgate2_taconsensus_continual': DeYOMLMPHMGate2TAConsensusContinual,
+    'deyo_mlmp_hmgate2_logitadj_continual': DeYOMLMPHMGate2LogitAdjContinual,
+    'deyo_mlmp_hmgate2_ratchet_continual': DeYOMLMPHMGate2RatchetContinual,
+    'deyo_mlmp_hmgate2_divloss_continual': DeYOMLMPHMGate2DivLossContinual,
+    'deyo_mlmp_hmgate2_repel_continual': DeYOMLMPHMGate2RepelContinual,
+    'deyo_mlmp_hmgate2_srcdistill_continual': DeYOMLMPHMGate2SrcDistillContinual,
+    'deyo_mlmp_hmgate2_oracle_continual': DeYOMLMPHMGate2OracleContinual,
+    'deyo_mlmp_hmgate2_distill_oracle_continual': DeYOMLMPHMGate2DistillOracleContinual,
+    'mgp_deyo_mlmp_continual': MGPDeYOMLMPContinual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
 }

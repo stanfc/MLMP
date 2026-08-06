@@ -598,8 +598,15 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
 
-    # --- DeYO+MLMP HMGate2: deep restore -> PERMANENT best anchor (never evicted) ---
-    elif method == 'deyo_mlmp_hmgate2_continual':
+    # --- DeYO+MLMP HMGate2 (PA) + marginal-diversity loss term ---
+    elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_hmgate2_divloss_continual',
+                    'deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_textalign_continual',
+                    'deyo_mlmp_hmgate2_logitadj_continual', 'deyo_mlmp_hmgate2_ratchet_continual',
+                    'deyo_mlmp_hmgate2_taconsensus_continual',
+                    'deyo_mlmp_hmgate2_repel_continual', 'deyo_mlmp_hmgate2_srcdistill_continual',
+                    'deyo_mlmp_hmgate2_oracle_continual',
+                    'deyo_mlmp_hmgate2_distill_oracle_continual',
+                    'deyo_mlmp_hmgate2_mseval_continual', 'deyo_mlmp_hmgate2_distill_continual'):
         parser.add_argument('--vision_outputs', nargs='+', type=int,
                             default=tuple(range(-1, -19, -1)))
         parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
@@ -621,6 +628,59 @@ def add_method_specific_args(parser, method):
                                  '-> deep restore toward PERMANENT best anchor')
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--ln_ckpt_every', type=int, default=0,
+                            help='dump a LN-weight snapshot every N gate windows '
+                                 '(for offline collapse-trajectory analysis); 0=off')
+        if method == 'deyo_mlmp_hmgate2_divloss_continual':
+            parser.add_argument('--lambda_div', type=float, default=0.5,
+                                help='weight of the marginal-diversity loss term on top of GDG-PA')
+        if method in ('deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_mseval_continual',
+                      'deyo_mlmp_hmgate2_distill_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--ema_m', type=float, default=0.99)
+            parser.add_argument('--tta_flip', type=int, default=1)
+        if method == 'deyo_mlmp_hmgate2_mseval_continual':
+            parser.add_argument('--ms_scales', nargs='+', type=float, default=[0.75, 1.25])
+        if method in ('deyo_mlmp_hmgate2_distill_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--lambda_distill', type=float, default=1.0)
+            parser.add_argument('--distill_conf', type=float, default=0.5)
+        if method in ('deyo_mlmp_hmgate2_textalign_continual', 'deyo_mlmp_hmgate2_taconsensus_continual'):
+            parser.add_argument('--lambda_align', type=float, default=0.1)
+            parser.add_argument('--top_k_align', type=float, default=0.2)
+        if method == 'deyo_mlmp_hmgate2_logitadj_continual':
+            parser.add_argument('--logit_tau', type=float, default=1.0)
+            parser.add_argument('--marg_ema', type=float, default=0.99)
+        if method == 'deyo_mlmp_hmgate2_repel_continual':
+            parser.add_argument('--lambda_repel', type=float, default=0.1)
+            parser.add_argument('--top_k_align', type=float, default=0.2)
+            parser.add_argument('--repel_k', type=int, default=3)
+        if method == 'deyo_mlmp_hmgate2_srcdistill_continual':
+            parser.add_argument('--lambda_srcdistill', type=float, default=0.1)
+            parser.add_argument('--distill_conf', type=float, default=0.5)
+        if method in ('deyo_mlmp_hmgate2_oracle_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--log_oracle', type=int, default=1,
+                                help='log cos(entropy-grad, GT-oracle-grad) per window')
+
+    # --- MGP (anonymous, tta-373C) gradient-projection on DeYO+MLMP ---
+    elif method == 'mgp_deyo_mlmp_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--mgp_distill_freq', type=int, default=100)
+        parser.add_argument('--mgp_buffer_size', type=int, default=32)
+        parser.add_argument('--mgp_max_rank', type=int, default=32)
+        parser.add_argument('--mgp_residual_thr', type=float, default=0.75)
+        parser.add_argument('--mgp_collect_freq', type=int, default=40)
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
     elif method == 'dat_continual':
@@ -1220,6 +1280,11 @@ def main(args):
                     adapt_method.diagnose(inputs)
 
                 if args.adapt:
+                    # oracle-direction diagnostic: hand the method the patch-level GT
+                    # so it can compute cos(entropy-grad, GT-supervised-grad) as a
+                    # reference (does NOT change the update).
+                    if hasattr(adapt_method, "set_oracle_labels") and "gt_patches" in data:
+                        adapt_method.set_oracle_labels(data["gt_patches"])
                     adapt_method.continual_adapt(inputs)
 
                 # ----- Optional full signal panel (written AFTER adapt so the -----
