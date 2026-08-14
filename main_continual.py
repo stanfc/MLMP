@@ -737,6 +737,21 @@ def add_method_specific_args(parser, method):
                                      "ceil(cap*rank(z)), tunable-free and scale-invariant.")
             parser.add_argument('--lag_sat', type=float, default=1.5,
                                 help='z at which lag_mode=sat reaches the full budget.')
+            parser.add_argument('--shallow_cap_mode', type=str, default='fixed',
+                                choices=['fixed', 'growing', 'growing_scaled',
+                                        'growing_hmargin', 'growing_hmargin_scaled'],
+                                help="(C) how far back SHALLOW restore may reach. 'fixed' = "
+                                     "min(maxlag_shallow, windows_since_min), AdaGate A/B "
+                                     "behaviour. 'growing' = min(len(win_buf)-1, "
+                                     "windows_since_min): deletes maxlag_shallow as a cap, so "
+                                     "reach grows with time-since-best -- targets post-peak "
+                                     "tail decline on datasets whose H_margin never triggers "
+                                     "collapse_regime (e.g. VOC20). 'growing_scaled' = same but "
+                                     "scaled by today's ecdf severity rank u, so a still-"
+                                     "improving run isn't over-restored just because grad_norm "
+                                     "bottomed out early. 'growing_hmargin' = distance measured "
+                                     "since H_margin's own peak instead of grad_norm's minimum. "
+                                     "'growing_hmargin_scaled' combines both.")
 
         if method == 'deyo_mlmp_promptw_hmgate2_continual':
             # entropy-weighted prompt aggregation (prompt/text-template axis)
@@ -1174,6 +1189,47 @@ def save_round_results(all_round_results, save_dir, conditions, filename="result
     print(f"\n[Summary saved → {summary_path}]")
 
 
+def _ckpt_path(save_dir):
+    return os.path.join(save_dir, "ckpt.pt")
+
+
+def save_checkpoint(save_dir, adapt_method, round_idx, cond_idx, round_results,
+                    all_round_results, entropy_total_batches):
+    """Atomically persist adapt-method state (LN params, optimizer, gate
+    bookkeeping) plus stream position, so a killed/rebooted run can resume from
+    the last completed (round, condition) instead of restarting from scratch.
+    No-op if the method doesn't implement state_dict() (older methods)."""
+    if not hasattr(adapt_method, "state_dict"):
+        return
+    ckpt = {
+        'adapt_state': adapt_method.state_dict(),
+        'round_idx': round_idx,
+        'cond_idx': cond_idx,
+        'round_results': round_results,
+        'all_round_results': all_round_results,
+        'entropy_total_batches': entropy_total_batches,
+    }
+    path = _ckpt_path(save_dir)
+    tmp_path = path + ".tmp"
+    torch.save(ckpt, tmp_path)
+    os.replace(tmp_path, path)  # atomic on POSIX -- never leaves a half-written ckpt.pt
+
+
+def load_checkpoint(save_dir, device):
+    path = _ckpt_path(save_dir)
+    if not os.path.exists(path):
+        return None
+    # Keep everything on CPU as it was saved -- marginal_buf/_win_buf/best_snapshot
+    # are deliberately CPU-resident throughout the class (GPU memory). Only
+    # ln_params get moved to `device`, done explicitly inside load_state_dict().
+    # map_location=device here would force EVERYTHING to GPU, creating a mixed
+    # CPU/CUDA marginal_buf once new (still-CPU) entries get appended post-resume.
+    # weights_only=False: torch>=2.6 defaults to True, which refuses to unpickle
+    # the numpy float64 mIoU/mDice/mAcc values inside round_results/all_round_results.
+    # Safe here -- this checkpoint is one we wrote ourselves, not a third-party file.
+    return torch.load(path, map_location='cpu', weights_only=False)
+
+
 def main(args):
     save_configuration(args)
     start_time = time.time()
@@ -1214,6 +1270,27 @@ def main(args):
     # The model is NEVER deleted or re-created for the rest of the experiment.
     # ----------------------------------------------------------------
     adapt_method = get_method(args, device)
+
+    # ----------------------------------------------------------------
+    # Resume from a previous run's checkpoint, if present (survives kills /
+    # machine maintenance). Restores LN params, optimizer, and gate state, and
+    # picks up right after the last fully-completed (round, condition).
+    # ----------------------------------------------------------------
+    resume_round_idx, resume_cond_idx = 0, -1
+    round_results = {}
+    ckpt = load_checkpoint(args.save_dir, device)
+    if ckpt is not None and hasattr(adapt_method, "load_state_dict"):
+        adapt_method.load_state_dict(ckpt['adapt_state'])
+        resume_round_idx = ckpt['round_idx']
+        resume_cond_idx = ckpt['cond_idx']
+        round_results = ckpt['round_results']
+        print(f"\n+++ Resumed from checkpoint: round {resume_round_idx + 1}, "
+              f"after condition idx {resume_cond_idx} "
+              f"({args.corruptions_list[resume_cond_idx] if resume_cond_idx >= 0 else 'none'})")
+    elif ckpt is not None:
+        print(f"\n+++ WARNING: checkpoint found at {_ckpt_path(args.save_dir)} but "
+              f"method '{args.method}' has no load_state_dict() -- ignoring checkpoint, "
+              f"starting fresh (results may be overwritten).")
 
     # DPCore requires source statistics before adaptation.
     # Using fog-as-source causes loss_raw≈0 when testing on fog, making the ID
@@ -1284,7 +1361,8 @@ def main(args):
         adapt_method.obtain_src_prototypes(src_loader)
         del src_loader
 
-    all_round_results = {}   # round_num → {condition → {mIoU, mDice, mAcc}}
+    all_round_results = (ckpt['all_round_results'] if ckpt is not None
+                        and hasattr(adapt_method, "load_state_dict") else {})
     all_ood_results = {}     # round_num → {ood_corruption → metrics} (--ood_corruptions)
     headers = "mIoU, mDice, mAcc"
 
@@ -1303,11 +1381,13 @@ def main(args):
     #   max_logit   : mean of max softmax probability (per pixel) — confidence
     # ----------------------------------------------------------------
     os.makedirs(args.save_dir, exist_ok=True)
+    _resuming = ckpt is not None and hasattr(adapt_method, "load_state_dict")
     entropy_log_path = os.path.join(args.save_dir, "entropy_log.csv")
-    with open(entropy_log_path, 'w') as f:
-        f.write("total_batch,round,condition,batch_idx,"
-                "h_margin,h_pixel_mean,max_logit\n")
-    _entropy_total_batches = 0  # monotonic across the whole stream
+    if not (_resuming and os.path.exists(entropy_log_path)):
+        with open(entropy_log_path, 'w') as f:
+            f.write("total_batch,round,condition,batch_idx,"
+                    "h_margin,h_pixel_mean,max_logit\n")
+    _entropy_total_batches = ckpt['entropy_total_batches'] if _resuming else 0
 
     # ----- Optional full signal panel (opt-in via --log_signals) -----
     _signal_monitor = None
@@ -1319,8 +1399,9 @@ def main(args):
         if hasattr(adapt_method, "collect_diag"):
             adapt_method.collect_diag = True
         _signals_log_path = os.path.join(args.save_dir, "signals_log.csv")
-        with open(_signals_log_path, 'w') as f:
-            f.write("total_batch,round,condition,batch_idx," + ",".join(SIGNAL_NAMES) + "\n")
+        if not (_resuming and os.path.exists(_signals_log_path)):
+            with open(_signals_log_path, 'w') as f:
+                f.write("total_batch,round,condition,batch_idx," + ",".join(SIGNAL_NAMES) + "\n")
         print(f"  Signal panel log: {_signals_log_path} ({len(SIGNAL_NAMES)} signals)")
 
     print(f"\n{'='*65}")
@@ -1330,15 +1411,19 @@ def main(args):
     print(f"  Entropy log: {entropy_log_path}")
     print(f"{'='*65}")
 
-    for round_idx in range(args.continual_rounds):
+    for round_idx in range(resume_round_idx, args.continual_rounds):
         round_num = round_idx + 1
-        round_results = {}
+        if round_idx != resume_round_idx:
+            round_results = {}   # fresh round; the resume round keeps its loaded partial results
 
         print(f"\n{'─'*65}")
         print(f"  Round {round_num:2d} / {args.continual_rounds}")
         print(f"{'─'*65}")
 
+        _cond_start_idx = (resume_cond_idx + 1) if round_idx == resume_round_idx else 0
         for cond_idx, condition in enumerate(conditions):
+            if cond_idx < _cond_start_idx:
+                continue  # already completed before the checkpoint was taken
             # ----------------------------------------------------------
             # Load data for this condition.
             # shuffle=False guarantees a deterministic stream order,
@@ -1497,6 +1582,11 @@ def main(args):
                     f"{metrics['mDice']:.4f} +/- 0.0000, "
                     f"{metrics['mAcc']:.4f} +/- 0.0000\n"
                 )
+
+            # Checkpoint after every (round, condition): survives a kill/reboot
+            # with at most one condition's worth of adaptation re-done on resume.
+            save_checkpoint(args.save_dir, adapt_method, round_idx, cond_idx,
+                            round_results, all_round_results, _entropy_total_batches)
 
         # ----------------------------------------------------------
         # Analysis (--ood_corruptions): frozen-weight eval on held-out

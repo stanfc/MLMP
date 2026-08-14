@@ -117,6 +117,27 @@ class DeYOMLMPAdaGateContinual:
                  # lag_mode: how restore depth is chosen inside the budget cap.
                  lag_mode='ecdf',
                  lag_sat=1.5,
+                 # shallow_cap_mode: (C) how far back SHALLOW restore may reach.
+                 #   'fixed'   cap = min(maxlag_shallow, windows_since_min)  <- hmgate2/AdaGate A/B
+                 #   'growing' cap = min(len(win_buf)-1, windows_since_min)  <- maxlag_shallow deleted;
+                 #             reach grows with time-since-best, so a slow post-peak drift
+                 #             (never entering collapse_regime, e.g. VOC20) still gets pulled
+                 #             back toward its own best state instead of being capped at a few
+                 #             windows forever. No-op whenever windows_since_min <= maxlag_shallow
+                 #             (i.e. identical to 'fixed' during the healthy climb).
+                 #   'growing_scaled'  cap = min(buf, ceil(windows_since_min * u)), u = today's
+                 #             ecdf severity rank (0..1, already computed for lag_mode=ecdf).
+                 #             'growing' grows purely with elapsed time regardless of how mild
+                 #             today's trend is; this scales that growth down unless the current
+                 #             window's z is itself unusually severe, so a still-improving run
+                 #             whose grad-norm merely bottomed out early isn't over-restored.
+                 #   'growing_hmargin' cap = min(buf, windows_since_h_peak) -- same idea as
+                 #             'growing' but the distance is measured since H_margin's own
+                 #             running peak, not since grad_norm's minimum. grad_norm and true
+                 #             performance are not always in step; H_margin tracked collapse
+                 #             more consistently across datasets in practice.
+                 #   'growing_hmargin_scaled' both of the above combined.
+                 shallow_cap_mode='fixed',
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
@@ -153,6 +174,10 @@ class DeYOMLMPAdaGateContinual:
             raise ValueError(f"trend_stat must be abs|rel|mad|tstat, got {trend_stat}")
         if lag_mode not in ('gain', 'sat', 'ecdf'):
             raise ValueError(f"lag_mode must be gain|sat|ecdf, got {lag_mode}")
+        if shallow_cap_mode not in ('fixed', 'growing', 'growing_scaled',
+                                    'growing_hmargin', 'growing_hmargin_scaled'):
+            raise ValueError(f"unknown shallow_cap_mode: {shallow_cap_mode}")
+        self.shallow_cap_mode = shallow_cap_mode
         self.trend_stat = trend_stat
         # 'abs' keeps hmgate2's semantics, where the deadzone IS slope_deadzone
         self.trend_thr = float(slope_deadzone) if trend_stat == 'abs' else float(trend_thr)
@@ -165,6 +190,7 @@ class DeYOMLMPAdaGateContinual:
         # H_margin regime state
         self.marginal_buf = []
         self.h_max = 0.0
+        self.windows_since_h_peak = 0   # (C, hmargin variants) windows since h_margin == h_max
         self.grad_buf = []          # per-batch grad_norm within current window
         self.grad_hist = []         # per-window mean grad_norm (for the slope)
         self.g_min = float('inf')
@@ -200,7 +226,8 @@ class DeYOMLMPAdaGateContinual:
               f"trend_stat={self.trend_stat}, trend_thr={self.trend_thr}, "
               f"trend_hist={self.trend_hist}, lag_mode={self.lag_mode}({lag_desc}), "
               f"slope_window={self.slope_window}, base_rst={self.base_rst}, "
-              f"maxlag_shallow={self.maxlag_shallow}, h_drop_ratio={self.h_drop_ratio}, "
+              f"maxlag_shallow={self.maxlag_shallow}, shallow_cap_mode={self.shallow_cap_mode}, "
+              f"h_drop_ratio={self.h_drop_ratio}, "
               f"max_windows={self.max_windows}, monitor={self.monitor_interval} "
               f"-> LN params: {len(params)}")
 
@@ -334,12 +361,70 @@ class DeYOMLMPAdaGateContinual:
         self.current_deep = False
         self.g_min = float('inf')
         self.windows_since_min = 0
+        self.windows_since_h_peak = 0
         self.grad_buf.clear()
         self.grad_hist.clear()
         self.marginal_buf.clear()
         self.slope_buf.clear()
         self.active_z_buf.clear()
         self.h_max = 0.0
+
+    def state_dict(self):
+        """Full adapt-state checkpoint: learnable LN params, optimizer, and all
+        gate bookkeeping needed to resume mid-stream with bit-for-bit continuation
+        (not just the same hyperparameters -- the actual trend/lag/collapse state)."""
+        return {
+            'ln_params': {n: p.detach().cpu().clone() for n, p in self.named_ln_params},
+            'optimizer': self.optimizer.state_dict(),
+            'slope_buf': list(self.slope_buf),
+            'active_z_buf': list(self.active_z_buf),
+            'marginal_buf': [t.clone() for t in self.marginal_buf],
+            'h_max': self.h_max,
+            'windows_since_h_peak': self.windows_since_h_peak,
+            'grad_buf': list(self.grad_buf),
+            'grad_hist': list(self.grad_hist),
+            'g_min': self.g_min,
+            'windows_since_min': self.windows_since_min,
+            'batch_count': self.batch_count,
+            'total_batches': self.total_batches,
+            'current_lag': self.current_lag,
+            'current_rst': self.current_rst,
+            'current_deep': self.current_deep,
+            'best_snapshot': (dict(self.best_snapshot)
+                              if self.best_snapshot is not None else None),
+            '_win_buf': [dict(w) for w in self._win_buf],
+        }
+
+    def load_state_dict(self, sd):
+        with torch.no_grad():
+            for n, p in self.named_ln_params:
+                p.data.copy_(sd['ln_params'][n].to(device=p.device, dtype=p.dtype))
+        self.optimizer.load_state_dict(sd['optimizer'])
+        # optimizer.state_dict() was captured from GPU params but the checkpoint is
+        # loaded on CPU (see load_checkpoint's map_location='cpu'); load_state_dict()
+        # does not move state tensors to match the param device, so Adam's
+        # exp_avg/exp_avg_sq must be moved back explicitly or the next step() fails.
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.device)
+        self.slope_buf = deque(sd['slope_buf'], maxlen=self.trend_hist)
+        self.active_z_buf = deque(sd['active_z_buf'], maxlen=self.trend_hist)
+        self.marginal_buf = list(sd['marginal_buf'])
+        self.h_max = sd['h_max']
+        self.windows_since_h_peak = sd['windows_since_h_peak']
+        self.grad_buf = list(sd['grad_buf'])
+        self.grad_hist = list(sd['grad_hist'])
+        self.g_min = sd['g_min']
+        self.windows_since_min = sd['windows_since_min']
+        self.batch_count = sd['batch_count']
+        self.total_batches = sd['total_batches']
+        self.current_lag = sd['current_lag']
+        self.current_rst = sd['current_rst']
+        self.current_deep = sd['current_deep']
+        self.best_snapshot = sd['best_snapshot']
+        self._win_buf = deque((dict(w) for w in sd['_win_buf']),
+                              maxlen=self.max_windows + 1)
 
     def _adapt_forward(self, x):
         logits, _, _ = self.model(
@@ -461,6 +546,10 @@ class DeYOMLMPAdaGateContinual:
         else:
             h_margin = self.h_max
         self.marginal_buf.clear()
+        if h_margin >= self.h_max:
+            self.windows_since_h_peak = 0
+        else:
+            self.windows_since_h_peak += 1
         self.h_max = max(self.h_max, h_margin)
         # collapse regime when H_margin has dropped below a fraction of its peak
         collapse_regime = h_margin < self.h_drop_ratio * self.h_max
@@ -483,12 +572,37 @@ class DeYOMLMPAdaGateContinual:
             self.active_z_buf.append(z)
         else:
             # SHALLOW: lag-deque restore so the slow climb (VOC20) is never suppressed.
-            cap = min(self.maxlag_shallow, self.windows_since_min)
+            # u_sev: today's ecdf severity rank (0..1), computed once and reused both for
+            # scaling the cap (growing_scaled/growing_hmargin_scaled) and, further down, for
+            # picking lag within whatever cap results (lag_mode='ecdf', unchanged from before).
+            u_sev = self._lag_fraction(z)
+            if self.shallow_cap_mode == 'growing':
+                # (C) reach grows with time-since-best (bounded only by buffer length),
+                # instead of being permanently stuck at maxlag_shallow once
+                # windows_since_min exceeds it -- targets the post-peak tail decline on
+                # datasets whose H_margin never drops enough to trigger collapse_regime.
+                cap = min(len(self._win_buf) - 1, self.windows_since_min)
+            elif self.shallow_cap_mode == 'growing_scaled':
+                # (C1) same reach-grows-over-time idea, but scaled by how severe TODAY's
+                # trend is, not just elapsed time -- a still-improving run whose grad-norm
+                # merely bottomed out early accrues reach slowly (u_sev usually mid-range);
+                # a genuinely worsening run (u_sev repeatedly high) accrues it fast.
+                cap = min(len(self._win_buf) - 1, math.ceil(self.windows_since_min * u_sev))
+            elif self.shallow_cap_mode == 'growing_hmargin':
+                # (C2) distance measured since H_margin's own running peak instead of since
+                # grad_norm's minimum -- grad_norm and true performance are not always in
+                # step; H_margin tracked collapse more consistently across datasets.
+                cap = min(len(self._win_buf) - 1, self.windows_since_h_peak)
+            elif self.shallow_cap_mode == 'growing_hmargin_scaled':
+                # (C1+C2) combined.
+                cap = min(len(self._win_buf) - 1, math.ceil(self.windows_since_h_peak * u_sev))
+            else:
+                cap = min(self.maxlag_shallow, self.windows_since_min)
             if self.lag_mode == 'gain':
                 lag = max(1, min(int(round(self.lag_gain * slope)), cap))
             else:
                 # (B) restore depth as a FRACTION of the available budget
-                u = self._lag_fraction(z)
+                u = u_sev
                 lag = max(1, math.ceil(cap * u))
             self.active_z_buf.append(z)
             rst = self.base_rst
@@ -497,7 +611,8 @@ class DeYOMLMPAdaGateContinual:
               f"slope={slope:+.4f} z({self.trend_stat})={z:+.3f}/{self.trend_thr:.3f} "
               f"H={h_margin:.3f}/{self.h_max:.3f} "
               f"{'COLLAPSE' if collapse_regime else 'healthy'} "
-              f"since_min={self.windows_since_min} u={u:.2f} lag={lag}w rst={rst:.4f} "
+              f"since_min={self.windows_since_min} since_hpeak={self.windows_since_h_peak} "
+              f"u={u:.2f} lag={lag}w rst={rst:.4f} "
               f"{'DEEP->best' if deep else 'shallow'}")
         if self.gate_log_path is not None:
             with open(self.gate_log_path, 'a') as _f:

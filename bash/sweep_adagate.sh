@@ -28,6 +28,7 @@
 #   GPU=4 ROUNDS=150 bash bash/sweep_adagate.sh acdc "ABmad05_ecdf Becdf"
 #   GPU=5 ROUNDS=3   SEQ=1 bash bash/sweep_adagate.sh acdc ctrl        # equivalence smoke
 set -u
+source ~/miniconda3/etc/profile.d/conda.sh
 SEQ="${SEQ:-0}"
 STAGGER="${STAGGER:-20}"
 TAG="${TAG:-}"
@@ -43,14 +44,29 @@ export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENCV_NUM_THREADS=2
 # reference run (hmgate2_prompt_S0_baseline) is directly comparable.
 case "$DS" in
   acdc)
-     DATASET=ACDCDataset;        DATA_DIR="data/ACDC/";        RESIZE="1120 560"
-     CONDS="fog night rain snow";                SUBSET="--subset_size 50 --subset_seed 0";  SUBDIR="" ;;
+     DATASET=ACDCDataset;        DATA_DIR=".data/ACDC/";        RESIZE="1120 560"
+     CONDS="fog night rain snow";                SUBSET="";  SUBDIR="" ;;
   v20)
-     DATASET=PascalVOC20Dataset; DATA_DIR="data/VOC/VOC2012/"; RESIZE="224 224"
+     DATASET=PascalVOC20Dataset; DATA_DIR=".data/VOC2012/"; RESIZE="224 224"
      CONDS="snow frost fog brightness contrast"; SUBSET="--subset_size 100 --subset_seed 0"; SUBDIR="v20_acdc_matched/" ;;
+  v20_15corr)
+     # Full ImageNet-C 15-corruption list (same order as bash/cityscapes_continual),
+     # sub100/corruption -> 1500 img/round (3x the 5corr v20 protocol). Tests whether
+     # more corruption diversity + more total adaptation steps induces collapse.
+     DATASET=PascalVOC20Dataset; DATA_DIR=".data/VOC2012/"; RESIZE="224 224"
+     CONDS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+     SUBSET="--subset_size 100 --subset_seed 0"; SUBDIR="v20_15corr/" ;;
   cityscapes)
-     DATASET=CityscapesDataset;  DATA_DIR="data/Cityscape/";   RESIZE="1120 560"
+     DATASET=CityscapesDataset;  DATA_DIR=".data/cityscapes/";   RESIZE="1120 560"
      CONDS="snow frost fog brightness contrast"; SUBSET="--subset_size 100 --subset_seed 0"; SUBDIR="" ;;
+  cityscapes_15corr)
+     # Mirrors v20_15corr: full 15-corruption list, sub100/corruption -> 1500 img/round
+     # (3x the 5corr cityscapes protocol). Second dataset for the "does flagship
+     # collapse under more corruption diversity + more total steps" question --
+     # v20_15corr already showed flagship collapsing; this checks generality.
+     DATASET=CityscapesDataset;  DATA_DIR=".data/cityscapes/";   RESIZE="1120 560"
+     CONDS="gaussian_noise shot_noise impulse_noise defocus_blur glass_blur motion_blur zoom_blur snow frost fog brightness contrast elastic_transform pixelate jpeg_compression"
+     SUBSET="--subset_size 100 --subset_seed 0"; SUBDIR="cityscapes_15corr/" ;;
   *) echo "bad dataset key: $DS"; exit 1 ;;
 esac
 
@@ -76,6 +92,16 @@ arm_cfg() {
     ABtstat10_ecdf) echo "tstat 1.0   ecdf 1.5" ;;
     ABmad0_sat)     echo "mad   0.0   sat  1.5" ;;
     ABmad05_sat)    echo "mad   0.5   sat  1.5" ;;
+    # (C) shallow_cap_mode=growing on top of the flagship: deletes maxlag_shallow as a
+    # hard cap so SHALLOW restore reach grows with windows_since_min (bounded only by
+    # the win_buf deque), targeting VOC20-style post-peak drift that never trips
+    # collapse_regime. 5th field = shallow_cap_mode (default "fixed" when omitted).
+    ABmad05_ecdf_grow) echo "mad   0.5   ecdf 1.5 growing" ;;
+    # (C1/C2/C1+C2) refinements on top of growing, isolating what "how far back" should be
+    # driven by -- see deyo_mlmp_adagate_continual.py module docstring for the exact formulas.
+    ABmad05_ecdf_grow_scaled)   echo "mad   0.5   ecdf 1.5 growing_scaled" ;;
+    ABmad05_ecdf_grow_hmargin)  echo "mad   0.5   ecdf 1.5 growing_hmargin" ;;
+    ABmad05_ecdf_grow_hmscaled) echo "mad   0.5   ecdf 1.5 growing_hmargin_scaled" ;;
     *) return 1 ;;
   esac
 }
@@ -83,11 +109,12 @@ arm_cfg() {
 run_one() {
   local arm="$1"
   local cfg; cfg="$(arm_cfg "$arm")" || { echo "unknown arm: $arm"; return 1; }
-  read -r TSTAT TTHR LMODE LSAT <<< "$cfg"
+  read -r TSTAT TTHR LMODE LSAT SCAP <<< "$cfg"
+  SCAP="${SCAP:-fixed}"
   local SAVE="save/${DATASET}/${SUBDIR}adagate_${arm}${TAG}/"
   local LOG="save/_sweep_logs/adagate_${DS}_${arm}${TAG}.log"
-  echo "[$(date +%H:%M)] START $DS arm=$arm (stat=$TSTAT thr=$TTHR lag=$LMODE sat=$LSAT) gpu=$GPU rounds=$ROUNDS -> $SAVE"
-  CUDA_VISIBLE_DEVICES=$GPU conda run -n MLMP python main_continual.py \
+  echo "[$(date +%H:%M)] START $DS arm=$arm (stat=$TSTAT thr=$TTHR lag=$LMODE sat=$LSAT cap=$SCAP) gpu=$GPU rounds=$ROUNDS -> $SAVE"
+  CUDA_VISIBLE_DEVICES=$GPU conda run -n mlmp python main_continual.py \
      --adapt --method deyo_mlmp_adagate_continual \
      --ovss_type naclip --ovss_backbone ViT-L/14 --prompt_dir prompts.yaml \
      --dataset "$DATASET" --data_dir "$DATA_DIR" --init_resize $RESIZE \
@@ -96,6 +123,7 @@ run_one() {
      --vision_outputs $OUT_VISION \
      --slope_window $SLOPE_WINDOW --slope_deadzone $SLOPE_DEADZONE --lag_gain $LAG_GAIN \
      --base_rst $BASE_RST --h_drop_ratio $H_DROP_RATIO --maxlag_shallow $MAXLAG_SHALLOW \
+     --shallow_cap_mode "$SCAP" \
      --monitor_interval $MONITOR_INTERVAL \
      --trend_stat "$TSTAT" --trend_thr "$TTHR" --trend_hist $TREND_HIST \
      --lag_mode "$LMODE" --lag_sat "$LSAT" \
