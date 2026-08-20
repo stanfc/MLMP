@@ -41,7 +41,7 @@ from utils.misc import load_prompts_from_yaml, print_clip_parameters, print_opti
 REFERENCE_PROMPT = 'a photo of a {}'
 
 
-class DeYOMLMPHMGate2Continual:
+class DeYOMLMPHMGate2DivLossContinual:
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
                  vision_outputs=tuple(range(-1, -19, -1)),
                  prompt_dir='prompts.yaml',
@@ -53,6 +53,7 @@ class DeYOMLMPHMGate2Continual:
                  reweight_ent=True,
                  reweight_plpd=True,
                  top_block_exclude=6,
+                 lambda_div=0.5,
                  # --- adaptive-lag gate (lag in WINDOW units) ---
                  slope_window=10,
                  slope_deadzone=0.002,
@@ -70,12 +71,12 @@ class DeYOMLMPHMGate2Continual:
                  h_drop_ratio=0.9,
                  maxlag_shallow=6,
                  monitor_interval=50,
-                 ln_ckpt_every=0,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
         self.ovss_backbone = ovss_backbone
         self.lr = lr
+        self.lambda_div = float(lambda_div)
         self.steps = steps
         self.vision_outputs = vision_outputs
         self.runtime = runtime_calculation
@@ -103,10 +104,6 @@ class DeYOMLMPHMGate2Continual:
         self.h_drop_ratio = float(h_drop_ratio)
         self.maxlag_shallow = int(maxlag_shallow)
         self.monitor_interval = int(monitor_interval)
-        # optional per-window LN-weight checkpoint dumping (for offline landscape/
-        # feature analysis of the collapse trajectory). 0 = off.
-        self.ln_ckpt_every = int(ln_ckpt_every)
-        self._ckpt_win = 0
         # H_margin regime state
         self.marginal_buf = []
         self.h_max = 0.0
@@ -155,11 +152,6 @@ class DeYOMLMPHMGate2Continual:
         self._win_buf.append(self._snapshot_ln_weights())
         # permanent best-state anchor (deep restore target; never evicted)
         self.best_snapshot = self._win_buf[-1]
-
-        self.ln_ckpt_dir = None
-        if save_dir and self.ln_ckpt_every > 0:
-            self.ln_ckpt_dir = os.path.join(save_dir, "ln_ckpt")
-            os.makedirs(self.ln_ckpt_dir, exist_ok=True)
 
         self.gate_log_path = None
         if save_dir:
@@ -297,6 +289,13 @@ class DeYOMLMPHMGate2Continual:
                         loss = (ent_kept * coeff).mean()
                     else:
                         loss = ent_kept.mean()
+                    # --- marginal-diversity loss term (maximize H_margin) on top
+                    # of the GDG-PA restore gate. Differentiable, single backward. ---
+                    if self.lambda_div > 0.0:
+                        marg = logits.softmax(dim=-3).mean(dim=0).mean(dim=[0, 2, 3])  # (C,)
+                        marg = marg / marg.sum().clamp(min=1e-8)
+                        h_div = -(marg * marg.clamp(min=1e-12).log()).sum()
+                        loss = loss - self.lambda_div * h_div
                     loss_report.append(loss.item())
                     loss.backward()
                     with torch.no_grad():
@@ -378,16 +377,6 @@ class DeYOMLMPHMGate2Continual:
                 _f.write(f"{self.total_batches},{g:.6f},{slope:.6f},"
                          f"{h_margin:.6f},{int(collapse_regime)},"
                          f"{self.windows_since_min},{lag},{rst:.6f},{int(deep)}\n")
-        # dump a LN snapshot for offline collapse-trajectory analysis
-        if self.ln_ckpt_dir is not None:
-            self._ckpt_win += 1
-            if self._ckpt_win % self.ln_ckpt_every == 0:
-                snap = {n: p.detach().half().cpu() for n, p in self.named_ln_params}
-                torch.save({'total_batches': self.total_batches, 'grad_norm': g,
-                            'h_margin': h_margin, 'collapse': int(collapse_regime),
-                            'ln': snap},
-                           os.path.join(self.ln_ckpt_dir,
-                                        f"win_{self.total_batches:07d}.pt"))
         self.current_lag = lag
         self.current_rst = rst
         self.current_deep = deep

@@ -73,6 +73,19 @@ from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
 from .deyo_mlmp_promptw_hmgate2_continual import DeYOMLMPPromptWHMGate2Continual
 from .deyo_mlmp_textres_hmgate2_continual import DeYOMLMPTextResHMGate2Continual
 from .deyo_mlmp_adagate_continual import DeYOMLMPAdaGateContinual
+from .deyo_mlmp_hmgate2_emaeval_continual import DeYOMLMPHMGate2EmaEvalContinual
+from .deyo_mlmp_hmgate2_mseval_continual import DeYOMLMPHMGate2MSEvalContinual
+from .deyo_mlmp_hmgate2_distill_continual import DeYOMLMPHMGate2DistillContinual
+from .deyo_mlmp_hmgate2_textalign_continual import DeYOMLMPHMGate2TextAlignContinual
+from .deyo_mlmp_hmgate2_taconsensus_continual import DeYOMLMPHMGate2TAConsensusContinual
+from .deyo_mlmp_hmgate2_logitadj_continual import DeYOMLMPHMGate2LogitAdjContinual
+from .deyo_mlmp_hmgate2_ratchet_continual import DeYOMLMPHMGate2RatchetContinual
+from .deyo_mlmp_hmgate2_divloss_continual import DeYOMLMPHMGate2DivLossContinual
+from .deyo_mlmp_hmgate2_repel_continual import DeYOMLMPHMGate2RepelContinual
+from .deyo_mlmp_hmgate2_srcdistill_continual import DeYOMLMPHMGate2SrcDistillContinual
+from .deyo_mlmp_hmgate2_oracle_continual import DeYOMLMPHMGate2OracleContinual
+from .deyo_mlmp_hmgate2_distill_oracle_continual import DeYOMLMPHMGate2DistillOracleContinual
+from .mgp_deyo_mlmp_continual import MGPDeYOMLMPContinual
 from .mlmp_divgate_continual import MLMPDivGateContinual
 from .sar_mlmp_smooth_anchor_continual import SARMLMPSmoothAnchorContinual
 
@@ -202,6 +215,19 @@ METHOD_CLASSES = {
     'deyo_mlmp_textres_hmgate2_continual': DeYOMLMPTextResHMGate2Continual,
     # GDG-PA with self-calibrating trigger (normalised trend) + lag (budget fraction)
     'deyo_mlmp_adagate_continual': DeYOMLMPAdaGateContinual,
+    'deyo_mlmp_hmgate2_emaeval_continual': DeYOMLMPHMGate2EmaEvalContinual,
+    'deyo_mlmp_hmgate2_mseval_continual': DeYOMLMPHMGate2MSEvalContinual,
+    'deyo_mlmp_hmgate2_distill_continual': DeYOMLMPHMGate2DistillContinual,
+    'deyo_mlmp_hmgate2_textalign_continual': DeYOMLMPHMGate2TextAlignContinual,
+    'deyo_mlmp_hmgate2_taconsensus_continual': DeYOMLMPHMGate2TAConsensusContinual,
+    'deyo_mlmp_hmgate2_logitadj_continual': DeYOMLMPHMGate2LogitAdjContinual,
+    'deyo_mlmp_hmgate2_ratchet_continual': DeYOMLMPHMGate2RatchetContinual,
+    'deyo_mlmp_hmgate2_divloss_continual': DeYOMLMPHMGate2DivLossContinual,
+    'deyo_mlmp_hmgate2_repel_continual': DeYOMLMPHMGate2RepelContinual,
+    'deyo_mlmp_hmgate2_srcdistill_continual': DeYOMLMPHMGate2SrcDistillContinual,
+    'deyo_mlmp_hmgate2_oracle_continual': DeYOMLMPHMGate2OracleContinual,
+    'deyo_mlmp_hmgate2_distill_oracle_continual': DeYOMLMPHMGate2DistillOracleContinual,
+    'mgp_deyo_mlmp_continual': MGPDeYOMLMPContinual,
     # Continual TTA with MLMP loss + diversity-gated stochastic restoration
     'mlmp_divgate_continual': MLMPDivGateContinual,
     # Continual TTA with SAR (SAM + reliable filter) + diversity-gated restore (DivGate replaces SAR recovery)

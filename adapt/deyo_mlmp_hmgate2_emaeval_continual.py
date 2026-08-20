@@ -41,7 +41,7 @@ from utils.misc import load_prompts_from_yaml, print_clip_parameters, print_opti
 REFERENCE_PROMPT = 'a photo of a {}'
 
 
-class DeYOMLMPHMGate2Continual:
+class DeYOMLMPHMGate2EmaEvalContinual:
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
                  vision_outputs=tuple(range(-1, -19, -1)),
                  prompt_dir='prompts.yaml',
@@ -53,6 +53,7 @@ class DeYOMLMPHMGate2Continual:
                  reweight_ent=True,
                  reweight_plpd=True,
                  top_block_exclude=6,
+                 ema_m=0.99, tta_flip=1,
                  # --- adaptive-lag gate (lag in WINDOW units) ---
                  slope_window=10,
                  slope_deadzone=0.002,
@@ -70,12 +71,13 @@ class DeYOMLMPHMGate2Continual:
                  h_drop_ratio=0.9,
                  maxlag_shallow=6,
                  monitor_interval=50,
-                 ln_ckpt_every=0,
                  save_dir=None,
                  runtime_calculation=False, device='cpu'):
         self.ovss_type = ovss_type
         self.ovss_backbone = ovss_backbone
         self.lr = lr
+        self.ema_m = float(ema_m)
+        self.tta_flip = int(tta_flip)
         self.steps = steps
         self.vision_outputs = vision_outputs
         self.runtime = runtime_calculation
@@ -103,10 +105,6 @@ class DeYOMLMPHMGate2Continual:
         self.h_drop_ratio = float(h_drop_ratio)
         self.maxlag_shallow = int(maxlag_shallow)
         self.monitor_interval = int(monitor_interval)
-        # optional per-window LN-weight checkpoint dumping (for offline landscape/
-        # feature analysis of the collapse trajectory). 0 = off.
-        self.ln_ckpt_every = int(ln_ckpt_every)
-        self._ckpt_win = 0
         # H_margin regime state
         self.marginal_buf = []
         self.h_max = 0.0
@@ -155,11 +153,8 @@ class DeYOMLMPHMGate2Continual:
         self._win_buf.append(self._snapshot_ln_weights())
         # permanent best-state anchor (deep restore target; never evicted)
         self.best_snapshot = self._win_buf[-1]
-
-        self.ln_ckpt_dir = None
-        if save_dir and self.ln_ckpt_every > 0:
-            self.ln_ckpt_dir = os.path.join(save_dir, "ln_ckpt")
-            os.makedirs(self.ln_ckpt_dir, exist_ok=True)
+        # EMA of LN params for mean-teacher evaluation
+        self.ema_ln = {n: p.detach().clone() for n, p in self.named_ln_params}
 
         self.gate_log_path = None
         if save_dir:
@@ -201,15 +196,30 @@ class DeYOMLMPHMGate2Continual:
         return self.perform_adaptation(x)
 
     @torch.no_grad()
+    def _eval_forward(self, x):
+        logits, _, _ = self.model(
+            x, self.text_x[-1], True, vision_outputs=self.vision_outputs,
+            interpolate=True, vision_out_type="adaptive_weighted_mean", save_weights=True)
+        return logits[0]
+
+    @torch.no_grad()
+    def _update_ema(self):
+        m = self.ema_m
+        for n, p in self.named_ln_params:
+            self.ema_ln[n].mul_(m).add_(p.detach(), alpha=1.0 - m)
+
+    @torch.no_grad()
     def evaluate(self, x):
         t1 = time.time()
-        logits, _, _ = self.model(
-            x, self.text_x[-1], True,
-            vision_outputs=self.vision_outputs,
-            interpolate=True,
-            vision_out_type="adaptive_weighted_mean",
-            save_weights=True)
-        logits = logits[0]
+        # swap student LN -> EMA LN (mean-teacher eval), forward, restore
+        backup = {n: p.detach().clone() for n, p in self.named_ln_params}
+        for n, p in self.named_ln_params:
+            p.data.copy_(self.ema_ln[n])
+        logits = self._eval_forward(x)
+        if self.tta_flip:
+            logits = 0.5 * (logits + self._eval_forward(torch.flip(x, dims=[-1])).flip(dims=[-1]))
+        for n, p in self.named_ln_params:
+            p.data.copy_(backup[n])
         if self.runtime:
             self.eval_times.append(time.time() - t1)
         return logits
@@ -307,6 +317,7 @@ class DeYOMLMPHMGate2Continual:
                         self.grad_buf.append(gn ** 0.5)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
+                    self._update_ema()
                     if self.current_rst > 0.0 and self.current_lag > 0:
                         self._stochastic_restore(self.current_rst, self.current_lag)
 
@@ -378,16 +389,6 @@ class DeYOMLMPHMGate2Continual:
                 _f.write(f"{self.total_batches},{g:.6f},{slope:.6f},"
                          f"{h_margin:.6f},{int(collapse_regime)},"
                          f"{self.windows_since_min},{lag},{rst:.6f},{int(deep)}\n")
-        # dump a LN snapshot for offline collapse-trajectory analysis
-        if self.ln_ckpt_dir is not None:
-            self._ckpt_win += 1
-            if self._ckpt_win % self.ln_ckpt_every == 0:
-                snap = {n: p.detach().half().cpu() for n, p in self.named_ln_params}
-                torch.save({'total_batches': self.total_batches, 'grad_norm': g,
-                            'h_margin': h_margin, 'collapse': int(collapse_regime),
-                            'ln': snap},
-                           os.path.join(self.ln_ckpt_dir,
-                                        f"win_{self.total_batches:07d}.pt"))
         self.current_lag = lag
         self.current_rst = rst
         self.current_deep = deep

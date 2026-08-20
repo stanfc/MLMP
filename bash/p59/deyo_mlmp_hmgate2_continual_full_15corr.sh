@@ -21,7 +21,7 @@ PROMPT_DIR="prompts.yaml"
 BATCH_SIZE=1
 LR=0.000005
 STEPS=1
-CONTINUAL_ROUNDS=50
+CONTINUAL_ROUNDS=150
 
 SAVE_DIR="save/${DATASET}/deyo_mlmp_hmgate2_continual_full_15corr/"
 

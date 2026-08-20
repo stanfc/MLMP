@@ -100,6 +100,22 @@ def argparser():
             'The full sequence is repeated continual_rounds times.'
         )
     )
+    parser.add_argument(
+        '--corruptions_list2', nargs='+', type=str, default=None,
+        help=(
+            'Optional second-phase corruption list. If set together with '
+            '--phase1_rounds, rounds 1..phase1_rounds use --corruptions_list '
+            'and rounds (phase1_rounds+1)..continual_rounds switch to this '
+            'list instead -- e.g. easy5corr for the first 75 rounds, '
+            'hard5corr for the last 75. Unset (default) preserves the '
+            'original single-list behavior exactly.'
+        )
+    )
+    parser.add_argument(
+        '--phase1_rounds', type=int, default=0,
+        help='Round at which to switch from --corruptions_list to '
+             '--corruptions_list2 (0 = disabled, no switch).'
+    )
     parser.add_argument('--class_extensions', action='store_true')
     parser.add_argument(
         '--split', type=str, default='val',
@@ -691,9 +707,18 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
 
-    # --- DeYO+MLMP HMGate2: deep restore -> PERMANENT best anchor (never evicted) ---
+    # --- DeYO+MLMP HMGate2 (PA): deep restore -> PERMANENT best anchor (never
+    # evicted); + AdaGate/prompt-weight/text-residual/marginal-diversity-loss variants ---
     elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual',
-                    'deyo_mlmp_textres_hmgate2_continual', 'deyo_mlmp_adagate_continual'):
+                    'deyo_mlmp_textres_hmgate2_continual', 'deyo_mlmp_adagate_continual',
+                    'deyo_mlmp_hmgate2_divloss_continual',
+                    'deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_textalign_continual',
+                    'deyo_mlmp_hmgate2_logitadj_continual', 'deyo_mlmp_hmgate2_ratchet_continual',
+                    'deyo_mlmp_hmgate2_taconsensus_continual',
+                    'deyo_mlmp_hmgate2_repel_continual', 'deyo_mlmp_hmgate2_srcdistill_continual',
+                    'deyo_mlmp_hmgate2_oracle_continual',
+                    'deyo_mlmp_hmgate2_distill_oracle_continual',
+                    'deyo_mlmp_hmgate2_mseval_continual', 'deyo_mlmp_hmgate2_distill_continual'):
         parser.add_argument('--vision_outputs', nargs='+', type=int,
                             default=tuple(range(-1, -19, -1)))
         parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
@@ -715,6 +740,9 @@ def add_method_specific_args(parser, method):
                                  '-> deep restore toward PERMANENT best anchor')
         parser.add_argument('--maxlag_shallow', type=int, default=6)
         parser.add_argument('--monitor_interval', type=int, default=50)
+        parser.add_argument('--ln_ckpt_every', type=int, default=0,
+                            help='dump a LN-weight snapshot every N gate windows '
+                                 '(for offline collapse-trajectory analysis); 0=off')
         if method == 'deyo_mlmp_adagate_continual':
             # self-calibrating trigger (A) and lag (B); see the module docstring for
             # why the absolute slope_deadzone / lag_gain are inert in hmgate2.
@@ -774,6 +802,56 @@ def add_method_specific_args(parser, method):
                                      'class text vectors. No effect unless text_res_lr>0.')
             parser.add_argument('--text_res_max_norm', type=float, default=0.5,
                                 help='per-class L2 cap on the residual (0 = uncapped).')
+        if method == 'deyo_mlmp_hmgate2_divloss_continual':
+            parser.add_argument('--lambda_div', type=float, default=0.5,
+                                help='weight of the marginal-diversity loss term on top of GDG-PA')
+        if method in ('deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_mseval_continual',
+                      'deyo_mlmp_hmgate2_distill_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--ema_m', type=float, default=0.99)
+            parser.add_argument('--tta_flip', type=int, default=1)
+        if method == 'deyo_mlmp_hmgate2_mseval_continual':
+            parser.add_argument('--ms_scales', nargs='+', type=float, default=[0.75, 1.25])
+        if method in ('deyo_mlmp_hmgate2_distill_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--lambda_distill', type=float, default=1.0)
+            parser.add_argument('--distill_conf', type=float, default=0.5)
+        if method in ('deyo_mlmp_hmgate2_textalign_continual', 'deyo_mlmp_hmgate2_taconsensus_continual'):
+            parser.add_argument('--lambda_align', type=float, default=0.1)
+            parser.add_argument('--top_k_align', type=float, default=0.2)
+        if method == 'deyo_mlmp_hmgate2_logitadj_continual':
+            parser.add_argument('--logit_tau', type=float, default=1.0)
+            parser.add_argument('--marg_ema', type=float, default=0.99)
+        if method == 'deyo_mlmp_hmgate2_repel_continual':
+            parser.add_argument('--lambda_repel', type=float, default=0.1)
+            parser.add_argument('--top_k_align', type=float, default=0.2)
+            parser.add_argument('--repel_k', type=int, default=3)
+        if method == 'deyo_mlmp_hmgate2_srcdistill_continual':
+            parser.add_argument('--lambda_srcdistill', type=float, default=0.1)
+            parser.add_argument('--distill_conf', type=float, default=0.5)
+        if method in ('deyo_mlmp_hmgate2_oracle_continual',
+                      'deyo_mlmp_hmgate2_distill_oracle_continual'):
+            parser.add_argument('--log_oracle', type=int, default=1,
+                                help='log cos(entropy-grad, GT-oracle-grad) per window')
+
+    # --- MGP (anonymous, tta-373C) gradient-projection on DeYO+MLMP ---
+    elif method == 'mgp_deyo_mlmp_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int,
+                            default=tuple(range(-1, -19, -1)))
+        parser.add_argument('--deyo_margin_factor', type=float, default=0.5)
+        parser.add_argument('--deyo_margin_e0_factor', type=float, default=0.4)
+        parser.add_argument('--plpd_threshold', type=float, default=0.2)
+        parser.add_argument('--aug_type', type=str, default='patch',
+                            choices=['patch', 'pixel', 'occ'])
+        parser.add_argument('--patch_len', type=int, default=4)
+        parser.add_argument('--reweight_ent', type=int, default=1)
+        parser.add_argument('--reweight_plpd', type=int, default=1)
+        parser.add_argument('--top_block_exclude', type=int, default=6)
+        parser.add_argument('--mgp_distill_freq', type=int, default=100)
+        parser.add_argument('--mgp_buffer_size', type=int, default=32)
+        parser.add_argument('--mgp_max_rank', type=int, default=32)
+        parser.add_argument('--mgp_residual_thr', type=float, default=0.75)
+        parser.add_argument('--mgp_collect_freq', type=int, default=40)
 
     # --- DAT (Distribution-Aware Tuning, CVPR 2024) ---
     elif method == 'dat_continual':
@@ -1239,6 +1317,22 @@ def main(args):
     conditions = args.corruptions_list
     assert conditions, "--corruptions_list must be provided (e.g., fog night rain snow)"
 
+    # Optional phase switch (e.g. easy5corr rounds 1-75 -> hard5corr rounds
+    # 76-150). Disabled by default (corruptions_list2 unset) -> active_conditions
+    # always equals `conditions`, identical to the original behavior.
+    def active_conditions(round_num):
+        if args.corruptions_list2 and args.phase1_rounds > 0 and round_num > args.phase1_rounds:
+            return args.corruptions_list2
+        return conditions
+
+    # Union of every condition name that can appear, in first-seen order --
+    # used only for the results-table header so both phases' columns show up
+    # (save_round_results already writes "N/A" for a condition absent in a
+    # given round).
+    all_conditions_seen = list(conditions)
+    if args.corruptions_list2:
+        all_conditions_seen += [c for c in args.corruptions_list2 if c not in all_conditions_seen]
+
     # ----------------------------------------------------------------
     # Resolve class list from first condition's dataset
     # (classes are condition-independent for ACDC/Cityscapes)
@@ -1284,9 +1378,10 @@ def main(args):
         resume_round_idx = ckpt['round_idx']
         resume_cond_idx = ckpt['cond_idx']
         round_results = ckpt['round_results']
+        _resume_conds = active_conditions(resume_round_idx + 1)
         print(f"\n+++ Resumed from checkpoint: round {resume_round_idx + 1}, "
               f"after condition idx {resume_cond_idx} "
-              f"({args.corruptions_list[resume_cond_idx] if resume_cond_idx >= 0 else 'none'})")
+              f"({_resume_conds[resume_cond_idx] if resume_cond_idx >= 0 else 'none'})")
     elif ckpt is not None:
         print(f"\n+++ WARNING: checkpoint found at {_ckpt_path(args.save_dir)} but "
               f"method '{args.method}' has no load_state_dict() -- ignoring checkpoint, "
@@ -1407,6 +1502,8 @@ def main(args):
     print(f"\n{'='*65}")
     print(f"  Starting CTTA: {args.continual_rounds} rounds × {len(conditions)} conditions")
     print(f"  Conditions: {conditions}")
+    if args.corruptions_list2 and args.phase1_rounds > 0:
+        print(f"  Phase switch @ round {args.phase1_rounds + 1}: -> {args.corruptions_list2}")
     print(f"  Adapt: {args.adapt}  |  Method: {args.method}  |  LR: {args.lr}")
     print(f"  Entropy log: {entropy_log_path}")
     print(f"{'='*65}")
@@ -1416,12 +1513,13 @@ def main(args):
         if round_idx != resume_round_idx:
             round_results = {}   # fresh round; the resume round keeps its loaded partial results
 
+        _round_conditions = active_conditions(round_num)
         print(f"\n{'─'*65}")
-        print(f"  Round {round_num:2d} / {args.continual_rounds}")
+        print(f"  Round {round_num:2d} / {args.continual_rounds}  (conditions: {_round_conditions})")
         print(f"{'─'*65}")
 
         _cond_start_idx = (resume_cond_idx + 1) if round_idx == resume_round_idx else 0
-        for cond_idx, condition in enumerate(conditions):
+        for cond_idx, condition in enumerate(_round_conditions):
             if cond_idx < _cond_start_idx:
                 continue  # already completed before the checkpoint was taken
             # ----------------------------------------------------------
@@ -1433,10 +1531,10 @@ def main(args):
             # --acdc_overlay_corruptions for the i-th condition (paired by index).
             _overlay = None
             if args.acdc_overlay_corruptions:
-                if len(args.acdc_overlay_corruptions) != len(conditions):
+                if len(args.acdc_overlay_corruptions) != len(_round_conditions):
                     raise ValueError(
                         f"--acdc_overlay_corruptions length ({len(args.acdc_overlay_corruptions)}) "
-                        f"must match --corruptions_list length ({len(conditions)})")
+                        f"must match --corruptions_list length ({len(_round_conditions)})")
                 _overlay = args.acdc_overlay_corruptions[cond_idx]
 
             # Analysis (--resample_subset): fresh random subset each (round, cond).
@@ -1513,6 +1611,11 @@ def main(args):
                     adapt_method.diagnose(inputs)
 
                 if args.adapt:
+                    # oracle-direction diagnostic: hand the method the patch-level GT
+                    # so it can compute cos(entropy-grad, GT-supervised-grad) as a
+                    # reference (does NOT change the update).
+                    if hasattr(adapt_method, "set_oracle_labels") and "gt_patches" in data:
+                        adapt_method.set_oracle_labels(data["gt_patches"])
                     adapt_method.continual_adapt(inputs)
 
                 # ----- Optional full signal panel (written AFTER adapt so the -----
@@ -1641,8 +1744,10 @@ def main(args):
 
         all_round_results[round_num] = round_results
 
-        # Incrementally update the summary file after each round
-        save_round_results(all_round_results, args.save_dir, conditions)
+        # Incrementally update the summary file after each round (union of
+        # both phases' condition names -- save_round_results already writes
+        # "N/A" for a condition absent in a given round).
+        save_round_results(all_round_results, args.save_dir, all_conditions_seen)
 
     # ----------------------------------------------------------------
     # Final summary
