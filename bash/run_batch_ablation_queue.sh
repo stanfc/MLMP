@@ -5,6 +5,9 @@
 # local reservation accounting + BUFFER). This machine is SHARED -- GPU1 is
 # another user's VLLM engine (~88GB) -- so we never assume a GPU is ours.
 #
+# SCOPE (revised 2026-08-21): V20 is NOT run here -- 學長 already produced all three
+# V20 batch sizes. This campaign covers ACDC + Cityscapes at batch 1 and 8 only.
+#
 # NOTE: batch=64 is intentionally absent for acdc/cityscapes. At 1120x560 with
 # patch 224 / stride 112 each image becomes 36 patches, so batch=64 = 2304
 # patches; the bilinear upsample then builds a [2304,19,224,224] tensor =
@@ -23,30 +26,13 @@ mkdir -p save/_batch_ablation_logs
 
 # "dataset:method:batch:rounds:mem_MiB"  -- biggest/longest first so they start soonest
 JOBS="
-acdc:gradnorm_scaled:8:150:88000
-acdc:deyo_mlmp:8:150:88000
-cityscapes:gradnorm_scaled:8:150:88000
-cityscapes:deyo_mlmp:8:150:88000
-acdc:gradnorm_scaled:1:150:16000
-acdc:deyo_mlmp:1:150:16000
-cityscapes:gradnorm_scaled:1:150:16000
 cityscapes:deyo_mlmp:1:150:16000
-v20:gradnorm_scaled:64:150:24000
-v20:deyo_mlmp:64:150:24000
-v20:gradnorm_scaled:8:150:10000
-v20:deyo_mlmp:8:150:10000
-v20:gradnorm_scaled:1:150:7000
-v20:deyo_mlmp:1:150:7000
-acdc:mlmp_episodic:8:1:88000
-cityscapes:mlmp_episodic:8:1:88000
-acdc:mlmp_episodic:1:1:16000
-cityscapes:mlmp_episodic:1:1:16000
-v20:mlmp_episodic:64:1:24000
-v20:mlmp_episodic:8:1:10000
-v20:mlmp_episodic:1:1:7000
 acdc:no_adapt:1:3:14000
 cityscapes:no_adapt:1:3:14000
-v20:no_adapt:1:3:6000
+acdc:mlmp_episodic:1:1:16000
+cityscapes:mlmp_episodic:1:1:16000
+acdc:mlmp_episodic:8:1:88000
+cityscapes:mlmp_episodic:8:1:88000
 "
 
 free_mib(){ nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$1" | tr -d ' '; }

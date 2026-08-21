@@ -3,12 +3,13 @@
 Run:  python plot_batch_ablation.py            # -> figures/batch_ablation/
       python plot_batch_ablation.py --outdir X --format pdf
 
-Emits 7 figures (3 datasets x {b1, b8}, plus V20 b64):
-    acdc_b1  acdc_b8  cityscapes_b1  cityscapes_b8  v20_b1  v20_b8  v20_b64
-batch=64 is absent for ACDC/Cityscapes by necessity: at 1120x560 with patch 224 /
-stride 112 each image is 36 patches, so b64 = 2304 patches and the bilinear
-upsample tensor [2304,19,224,224] = 2.20e9 elements exceeds INT_MAX (it would
-also need ~630GB; b8 alone peaks at 79.2GB).
+Emits 4 figures -- ACDC and Cityscapes at batch 1 and 8:
+    acdc_b1  acdc_b8  cityscapes_b1  cityscapes_b8
+VOC20 is deliberately NOT covered here: 學長 already ran all three V20 batch
+sizes separately. batch=64 is impossible on ACDC/Cityscapes anyway -- at
+1120x560 with patch 224 / stride 112 each image is 36 patches, so b64 = 2304
+patches and the bilinear upsample tensor [2304,19,224,224] = 2.20e9 elements
+exceeds INT_MAX (it would also need ~630GB; b8 alone peaks at 79.2GB).
 
 Each panel carries four series:
     gradnorm_scaled  ours   - adagate, shallow_cap_mode=growing_scaled, base_rst=0.01
@@ -46,12 +47,10 @@ INK, INK_MUTED, GRIDC = "#1a1a1a", "#5c5c5c", "#d9d9d9"
 DATASETS = {
     "acdc":       dict(dir="ACDCDataset",        title="ACDC",       note="full, 406 img/round"),
     "cityscapes": dict(dir="CityscapesDataset",  title="Cityscapes", note="subset 100/corruption"),
-    "v20":        dict(dir="PascalVOC20Dataset", title="VOC20",      note="subset 100/corruption"),
 }
 # (dataset key, batch size) -> one figure
 PANELS = [("acdc", 1), ("acdc", 8),
-          ("cityscapes", 1), ("cityscapes", 8),
-          ("v20", 1), ("v20", 8), ("v20", 64)]
+          ("cityscapes", 1), ("cityscapes", 8)]
 
 
 def _dir(ds, method, bs):
@@ -90,8 +89,10 @@ def episodic_value(ds, bs):
 
 
 def noadapt_value(ds):
-    """no_adapt never updates the model, so it is constant across rounds AND
-    across batch sizes -- it is run once (batch=1) and reused in every panel."""
+    """no_adapt never updates the model, so it is constant across rounds and
+    across batch sizes -- run once (batch=1) and reused in every panel.
+    Verified empirically on VOC20: batch 1 vs 8 agree to 0.01-0.02 mIoU, i.e.
+    fp16 kernel-selection noise, not a batch-size effect."""
     v = rounds_series(ds, "no_adapt", 1)
     return float(np.mean(v)) if v.size else None
 
