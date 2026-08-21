@@ -53,3 +53,11 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python main_continual.py \
                         \
                         --save_dir $SAVE_DIR \
                         --class_extensions
+
+# --- notify phone when finished (ntfy.sh) ---
+STATUS=$?
+if [ $STATUS -eq 0 ]; then
+  bash notify.sh "✅ $(basename "$0") DONE | $(tail -1 "$SAVE_DIR/results_all_rounds.txt" 2>/dev/null)" "MLMP ✅"
+else
+  bash notify.sh "❌ $(basename "$0") FAILED (exit $STATUS)" "MLMP ❌"
+fi
