@@ -44,8 +44,12 @@ export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENCV_NUM_THREADS=2
 # reference run (hmgate2_prompt_S0_baseline) is directly comparable.
 case "$DS" in
   acdc)
+     # FULL ACDC (406 img/round), matching 學長 2026.08.14 -- results are directly
+     # comparable to theirs. Older save/ACDCDataset/adagate_* used --subset_size 50
+     # (200/round) and are NOT comparable; re-run them to compare. To reproduce those:
+     #   ACDC_SUBSET="--subset_size 50 --subset_seed 0" bash bash/sweep_adagate.sh acdc <arm>
      DATASET=ACDCDataset;        DATA_DIR="data/ACDC/";        RESIZE="1120 560"
-     CONDS="fog night rain snow";                SUBSET="${ACDC_SUBSET---subset_size 50 --subset_seed 0}";  SUBDIR="" ;;
+     CONDS="fog night rain snow";                SUBSET="${ACDC_SUBSET-}";  SUBDIR="" ;;
   v20)
      DATASET=PascalVOC20Dataset; DATA_DIR="data/VOC/VOC2012/"; RESIZE="224 224"
      CONDS="snow frost fog brightness contrast"; SUBSET="--subset_size 100 --subset_seed 0"; SUBDIR="v20_acdc_matched/" ;;
