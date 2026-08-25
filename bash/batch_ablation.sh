@@ -22,6 +22,14 @@ MK="${2:?method: no_adapt|mlmp_episodic|gradnorm_scaled|deyo_mlmp}"
 BS="${3:?batch size}"
 GPU="${4:-0}"
 ROUNDS="${5:-150}"
+# LR override for the batch-size-matched ("LR-scaled") arms. The default 5e-6 is this
+# codebase's OVSS convention at every batch size, but that makes b8 take 8x FEWER Adam
+# steps than b1 over the same stream, so a b1-vs-b8 plot confounds "batch size" with
+# "total amount of adaptation". Adam's per-step update magnitude is ~LR regardless of
+# gradient scale, so total movement ~ n_steps * LR; matching b1 therefore needs
+# LR_OVERRIDE = 8 * 5e-6 = 4e-5 at batch 8 (linear scaling).
+LR="${LR_OVERRIDE:-0.000005}"
+TAG="${TAG:-}"
 PY=~/miniconda3/envs/MLMP/bin/python
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENCV_NUM_THREADS=2
 
@@ -36,8 +44,8 @@ case "$DS" in
 esac
 
 OUT_VISION="-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18"
-SAVE="save/${DATASET}/batch_ablation/${MK}_b${BS}/"
-LOG="save/_batch_ablation_logs/${DS}_${MK}_b${BS}.log"
+SAVE="save/${DATASET}/batch_ablation/${MK}_b${BS}${TAG}/"
+LOG="save/_batch_ablation_logs/${DS}_${MK}_b${BS}${TAG}.log"
 mkdir -p "$SAVE" save/_batch_ablation_logs
 
 # shared flags for the two adagate-based arms (identical except --base_rst)
@@ -48,9 +56,9 @@ ADAGATE_COMMON="--adapt --method deyo_mlmp_adagate_continual
   --max_windows 2000 --h_drop_ratio 0.9 --maxlag_shallow 6
   --monitor_interval 50 --trend_stat mad --trend_thr 0.5 --trend_hist 50
   --lag_mode ecdf --lag_sat 1.5 --shallow_cap_mode growing_scaled
-  --lr 0.000005 --steps 1"
+  --lr $LR --steps 1"
 
-echo "[$(date '+%m-%d %H:%M')] START $DS/$MK/b$BS gpu=$GPU rounds=$ROUNDS -> $SAVE"
+echo "[$(date '+%m-%d %H:%M')] START $DS/$MK/b$BS${TAG} lr=$LR gpu=$GPU rounds=$ROUNDS -> $SAVE"
 
 if [ "$MK" = "mlmp_episodic" ]; then
   # episodic: main.py, resets per sample -> a flat reference line, no rounds needed
@@ -85,4 +93,4 @@ else
     --vision_outputs $OUT_VISION \
     --save_dir "$SAVE" --class_extensions > "$LOG" 2>&1
 fi
-echo "[$(date '+%m-%d %H:%M')] DONE  $DS/$MK/b$BS (exit $?)"
+echo "[$(date '+%m-%d %H:%M')] DONE  $DS/$MK/b$BS${TAG} (exit $?)"

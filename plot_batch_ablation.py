@@ -3,8 +3,16 @@
 Run:  python plot_batch_ablation.py            # -> figures/batch_ablation/
       python plot_batch_ablation.py --outdir X --format pdf
 
-Emits 4 figures -- ACDC and Cityscapes at batch 1 and 8:
-    acdc_b1  acdc_b8  cityscapes_b1  cityscapes_b8
+Emits 6 figures -- ACDC and Cityscapes at batch 1, batch 8, and batch 8 with the
+learning rate scaled to match batch 1's total adaptation:
+    acdc_b1  acdc_b8  acdc_b8_lrscaled
+    cityscapes_b1  cityscapes_b8  cityscapes_b8_lrscaled
+The LR-scaled panels exist because at the fixed 5e-6 LR, batch=8 takes 8x fewer Adam
+steps than batch=1 over the same stream (159 vs 1218 gate windows measured), so the
+plain b8 panel confounds "batch size" with "total amount of adaptation". Adam's
+per-step update is ~LR regardless of gradient scale, so matching b1's total movement
+needs 8 x 5e-6 = 4e-5. no_adapt (never updates) and mlmp_episodic (own LR 1e-3,
+resets per sample) are reused unchanged as the reference lines in those panels.
 VOC20 is deliberately NOT covered here: 學長 already ran all three V20 batch
 sizes separately. batch=64 is impossible on ACDC/Cityscapes anyway -- at
 1120x560 with patch 224 / stride 112 each image is 36 patches, so b64 = 2304
@@ -49,17 +57,20 @@ DATASETS = {
     "cityscapes": dict(dir="CityscapesDataset",  title="Cityscapes", note="subset 100/corruption"),
 }
 # (dataset key, batch size) -> one figure
-PANELS = [("acdc", 1), ("acdc", 8),
-          ("cityscapes", 1), ("cityscapes", 8)]
+# (dataset key, batch size, save-dir suffix, title suffix)
+PANELS = [("acdc", 1, "", ""), ("acdc", 8, "", ""),
+          ("acdc", 8, "_lr4e-5", "  ·  LR-scaled 4e-5"),
+          ("cityscapes", 1, "", ""), ("cityscapes", 8, "", ""),
+          ("cityscapes", 8, "_lr4e-5", "  ·  LR-scaled 4e-5")]
 
 
-def _dir(ds, method, bs):
-    return os.path.join(ROOT, DATASETS[ds]["dir"], "batch_ablation", f"{method}_b{bs}")
+def _dir(ds, method, bs, sfx=""):
+    return os.path.join(ROOT, DATASETS[ds]["dir"], "batch_ablation", f"{method}_b{bs}{sfx}")
 
 
-def rounds_series(ds, method, bs):
+def rounds_series(ds, method, bs, sfx=""):
     """Mean_mIoU per round from results_all_rounds.txt; empty array if absent."""
-    f = os.path.join(_dir(ds, method, bs), "results_all_rounds.txt")
+    f = os.path.join(_dir(ds, method, bs, sfx), "results_all_rounds.txt")
     if not os.path.exists(f):
         return np.array([])
     vals = []
@@ -97,11 +108,11 @@ def noadapt_value(ds):
     return float(np.mean(v)) if v.size else None
 
 
-def draw(ax, ds, bs):
+def draw(ax, ds, bs, sfx="", tsfx=""):
     """Returns a dict of what was actually found, for the coverage report."""
     found = {}
-    ours = rounds_series(ds, "gradnorm_scaled", bs)
-    deyo = rounds_series(ds, "deyo_mlmp", bs)
+    ours = rounds_series(ds, "gradnorm_scaled", bs, sfx)
+    deyo = rounds_series(ds, "deyo_mlmp", bs, sfx)
     epi = episodic_value(ds, bs)
     noad = noadapt_value(ds)
 
@@ -130,7 +141,7 @@ def draw(ax, ds, bs):
         ax.set_ylim(mid - MIN_SPAN / 2, mid + MIN_SPAN / 2)
 
     meta = DATASETS[ds]
-    ax.set_title(f"{meta['title']}  ·  batch = {bs}", fontsize=17, color=INK, pad=10)
+    ax.set_title(f"{meta['title']}  ·  batch = {bs}{tsfx}", fontsize=17, color=INK, pad=10)
     ax.set_xlabel("round", fontsize=13, color=INK_MUTED)
     ax.set_ylabel("mean mIoU", fontsize=13, color=INK_MUTED)
     ax.set_xlim(0, max(xmax, 10) * 1.02)
@@ -149,8 +160,16 @@ def draw(ax, ds, bs):
     if labels:
         span = (ax.get_ylim()[1] - ax.get_ylim()[0]) or 1.0
         minsep, prev = span * 0.075, None
-        for y, txt, col in labels:
+        # keep the de-collided stack inside the axes so the topmost label is not
+        # clipped by the figure edge when several series sit at the same value
+        y_lo, y_hi = ax.get_ylim()
+        top = y_hi - span * 0.02
+        need = (len(labels) - 1) * minsep
+        start_cap = top - need
+        for i, (y, txt, col) in enumerate(labels):
             yy = y if prev is None else max(y, prev + minsep)
+            yy = min(yy, start_cap + i * minsep)
+            yy = max(min(yy, top), y_lo + span * 0.02)
             ax.text(1.015, yy, txt, transform=ax.get_yaxis_transform(),
                     color=col, fontsize=11, va="center", ha="left",
                     fontweight="bold", clip_on=False)
@@ -168,9 +187,9 @@ def main():
 
     print(f"batch-size ablation figures -> {args.outdir}/\n")
     report = []
-    for ds, bs in PANELS:
+    for ds, bs, sfx, tsfx in PANELS:
         fig, ax = plt.subplots(figsize=(9.0, 5.4))
-        found = draw(ax, ds, bs)
+        found = draw(ax, ds, bs, sfx, tsfx)
 
         # legend is always present for >=2 series; line style repeats the
         # solid/flat distinction so identity is never carried by colour alone
@@ -186,9 +205,11 @@ def main():
         fig.subplots_adjust(left=0.125, right=0.775, top=0.905, bottom=0.30)
         meta = DATASETS[ds]
         note = meta["note"] + "   ·   no-adapt and MLMP-episodic are flat references"
+        if sfx:
+            note += " (at their own LR)"
         fig.text(0.125, 0.035, note, fontsize=9.5, color=INK_MUTED, ha="left")
 
-        name = f"{ds}_b{bs}.{args.format}"
+        name = f"{ds}_b{bs}{'_lrscaled' if sfx else ''}.{args.format}"
         fig.savefig(os.path.join(args.outdir, name), dpi=args.dpi,
                     facecolor="white")
         plt.close(fig)
