@@ -39,10 +39,16 @@ MONITOR="${MONITOR:-6}"      # ceil(50/8): gate clock in IMAGE units, matching b
 TAG="${TAG:-_matched}"
 mkdir -p save/_batch_ablation_logs
 
+# ORDER MATTERS: the queue places top-down. Both gated (ours) runs go first --
+# they answer the primary question "does the method still work at batch 8 once the
+# amount of adaptation and the gate's clock are matched to batch 1?". The two
+# base_rst=0 no-gate controls run afterwards; they answer the follow-up "and is the
+# gate the reason?", which is lower priority because the b1 panels already show that
+# contrast starkly (ACDC 31.92 vs 6.04, Cityscapes 24.05 vs 2.79).
 JOBS="
 acdc:gradnorm_scaled
-acdc:deyo_mlmp
 cityscapes:gradnorm_scaled
+acdc:deyo_mlmp
 cityscapes:deyo_mlmp
 "
 
