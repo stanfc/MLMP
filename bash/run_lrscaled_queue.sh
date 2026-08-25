@@ -7,7 +7,18 @@
 # "does the method survive a large batch". Adam's per-step update is ~LR regardless of
 # gradient magnitude, so total movement ~ n_steps * LR; matching b1 needs 8 * 5e-6 = 4e-5.
 #
-# 4 runs: {ACDC, Cityscapes} x {gradnorm_scaled, deyo_mlmp} at batch 8, LR 4e-5.
+# TWO changes together, because either alone is misleading:
+#   LR 5e-6 -> 4e-5      restores the AMOUNT of adaptation (8x fewer Adam steps at b8)
+#   monitor_interval 50 -> 6   restores the gate's RESPONSE BANDWIDTH (152 -> ~1270
+#                        windows, so windows_since_min is no longer hard-capped and the
+#                        SHALLOW lag stops collapsing to ~2)
+# Scaling only the LR would let the model drift while the gate still samples 8x too
+# coarsely -- a collapse there would be misread as "the gate fails at large batch".
+#
+# 4 runs: {ACDC, Cityscapes} x {gradnorm_scaled, deyo_mlmp} at batch 8.
+# deyo_mlmp (base_rst=0) is REQUIRED: without the no-gate arm at the same LR there is
+# nothing to attribute stability to. It ignores monitor_interval functionally
+# (_stochastic_restore is never called when rst=0, so no RNG is consumed either).
 # no_adapt is unaffected (never updates) and mlmp_episodic keeps its own LR 1e-3 and
 # per-sample reset -- both are reused as-is for the reference lines.
 #
@@ -24,7 +35,8 @@ GPUS="${GPUS:-0 1 2 3 4 5}"
 MAXPER="${MAXPER:-1}"          # b8 needs ~79GB: at most one of ours per GPU
 NEED="${NEED:-88000}"
 LR="${LR:-0.00004}"
-TAG="${TAG:-_lr4e-5}"
+MONITOR="${MONITOR:-6}"      # ceil(50/8): gate clock in IMAGE units, matching b1
+TAG="${TAG:-_matched}"
 mkdir -p save/_batch_ablation_logs
 
 JOBS="
@@ -47,7 +59,7 @@ mine_on(){   # count only OUR batch_ablation jobs on this GPU
 }
 
 pending="$(printf '%s' "$JOBS" | grep -v '^[[:space:]]*$')"
-echo "[lq] $(date '+%m-%d %H:%M') start: $(printf '%s\n' "$pending" | grep -c .) jobs, LR=$LR TAG=$TAG, need ${NEED}MiB each"
+echo "[lq] $(date '+%m-%d %H:%M') start: $(printf '%s\n' "$pending" | grep -c .) jobs, LR=$LR monitor_interval=$MONITOR TAG=$TAG, need ${NEED}MiB each"
 
 while [ -n "$(printf '%s' "$pending" | grep -v '^[[:space:]]*$')" ]; do
   declare -A RES; for g in $GPUS; do RES[$g]=0; done
@@ -61,7 +73,7 @@ while [ -n "$(printf '%s' "$pending" | grep -v '^[[:space:]]*$')" ]; do
       avail=$(( free - ${RES[$g]} ))
       if [ "$slots" -lt "$MAXPER" ] && [ "$avail" -ge $(( NEED + BUFFER )) ]; then
         echo "[lq] $(date '+%H:%M') PLACE $ds/$mk -> GPU$g (free ${free})"
-        LR_OVERRIDE="$LR" TAG="$TAG" bash bash/batch_ablation.sh "$ds" "$mk" 8 "$g" 150 &
+        LR_OVERRIDE="$LR" MONITOR_OVERRIDE="$MONITOR" TAG="$TAG" bash bash/batch_ablation.sh "$ds" "$mk" 8 "$g" 150 &
         RES[$g]=$(( ${RES[$g]} + NEED )); placed=1; progress=1; sleep "$SETTLE"; break
       fi
     done

@@ -29,6 +29,13 @@ ROUNDS="${5:-150}"
 # gradient scale, so total movement ~ n_steps * LR; matching b1 therefore needs
 # LR_OVERRIDE = 8 * 5e-6 = 4e-5 at batch 8 (linear scaling).
 LR="${LR_OVERRIDE:-0.000005}"
+# monitor_interval counts BATCHES, so at batch B one gate window spans 50*B images --
+# the gate's clock is implicitly batch-size-dependent. Measured on ACDC: b8 got only
+# 152 windows vs b1's 1218, which caps windows_since_min and collapses the SHALLOW
+# restore reach (lag median 242 -> 2). Setting MONITOR_OVERRIDE=ceil(50/B) restores
+# both the window count AND the restore-event density per image (b1: 1 per 169 img,
+# b8@50: 1 per 1590, b8@6: 1 per 192), so base_rst can stay at 0.01.
+MONITOR="${MONITOR_OVERRIDE:-50}"
 TAG="${TAG:-}"
 PY=~/miniconda3/envs/MLMP/bin/python
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENCV_NUM_THREADS=2
@@ -54,7 +61,7 @@ ADAGATE_COMMON="--adapt --method deyo_mlmp_adagate_continual
   --aug_type patch --patch_len 4 --reweight_ent 1 --reweight_plpd 1 --top_block_exclude 6
   --slope_window 10 --slope_deadzone 0.002 --lag_gain 1500.0
   --max_windows 2000 --h_drop_ratio 0.9 --maxlag_shallow 6
-  --monitor_interval 50 --trend_stat mad --trend_thr 0.5 --trend_hist 50
+  --monitor_interval $MONITOR --trend_stat mad --trend_thr 0.5 --trend_hist 50
   --lag_mode ecdf --lag_sat 1.5 --shallow_cap_mode growing_scaled
   --lr $LR --steps 1"
 

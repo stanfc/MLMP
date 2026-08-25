@@ -4,15 +4,21 @@ Run:  python plot_batch_ablation.py            # -> figures/batch_ablation/
       python plot_batch_ablation.py --outdir X --format pdf
 
 Emits 6 figures -- ACDC and Cityscapes at batch 1, batch 8, and batch 8 with the
-learning rate scaled to match batch 1's total adaptation:
-    acdc_b1  acdc_b8  acdc_b8_lrscaled
-    cityscapes_b1  cityscapes_b8  cityscapes_b8_lrscaled
-The LR-scaled panels exist because at the fixed 5e-6 LR, batch=8 takes 8x fewer Adam
-steps than batch=1 over the same stream (159 vs 1218 gate windows measured), so the
-plain b8 panel confounds "batch size" with "total amount of adaptation". Adam's
-per-step update is ~LR regardless of gradient scale, so matching b1's total movement
-needs 8 x 5e-6 = 4e-5. no_adapt (never updates) and mlmp_episodic (own LR 1e-3,
-resets per sample) are reused unchanged as the reference lines in those panels.
+batch 8 made comparable to batch 1:
+    acdc_b1  acdc_b8  acdc_b8_matched
+    cityscapes_b1  cityscapes_b8  cityscapes_b8_matched
+The "matched" panels change TWO things together, because either alone misleads:
+  LR 5e-6 -> 4e-5          batch=8 takes 8x fewer Adam steps over the same stream, and
+                           Adam's per-step update is ~LR, so this restores the AMOUNT
+                           of adaptation (plain b8 drifted only +0.08 mIoU in 150R).
+  monitor_interval 50 -> 6 monitor_interval counts BATCHES, so the gate's clock is
+                           implicitly batch-dependent: b8 got 152 windows vs b1's 1218,
+                           which hard-caps windows_since_min and collapsed the SHALLOW
+                           restore lag from a median of 242 windows to 2. Scaling it by
+                           1/batch restores both the window count and the restore-event
+                           density per image, so base_rst stays 0.01.
+no_adapt (never updates) and mlmp_episodic (own LR 1e-3, per-sample reset) are reused
+unchanged as the reference lines in those panels.
 VOC20 is deliberately NOT covered here: 學長 already ran all three V20 batch
 sizes separately. batch=64 is impossible on ACDC/Cityscapes anyway -- at
 1120x560 with patch 224 / stride 112 each image is 36 patches, so b64 = 2304
@@ -59,9 +65,9 @@ DATASETS = {
 # (dataset key, batch size) -> one figure
 # (dataset key, batch size, save-dir suffix, title suffix)
 PANELS = [("acdc", 1, "", ""), ("acdc", 8, "", ""),
-          ("acdc", 8, "_lr4e-5", "  ·  LR-scaled 4e-5"),
+          ("acdc", 8, "_matched", "  ·  batch-matched (LR 4e-5, win 6)"),
           ("cityscapes", 1, "", ""), ("cityscapes", 8, "", ""),
-          ("cityscapes", 8, "_lr4e-5", "  ·  LR-scaled 4e-5")]
+          ("cityscapes", 8, "_matched", "  ·  batch-matched (LR 4e-5, win 6)")]
 
 
 def _dir(ds, method, bs, sfx=""):
@@ -209,7 +215,7 @@ def main():
             note += " (at their own LR)"
         fig.text(0.125, 0.035, note, fontsize=9.5, color=INK_MUTED, ha="left")
 
-        name = f"{ds}_b{bs}{'_lrscaled' if sfx else ''}.{args.format}"
+        name = f"{ds}_b{bs}{'_matched' if sfx else ''}.{args.format}"
         fig.savefig(os.path.join(args.outdir, name), dpi=args.dpi,
                     facecolor="white")
         plt.close(fig)
