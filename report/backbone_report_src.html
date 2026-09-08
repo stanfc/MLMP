@@ -1,0 +1,342 @@
+<title>Backbone Transfer Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  color-scheme: light;
+  --ground:#fbfbfc; --surface:#ffffff; --surface-2:#f3f5f8;
+  --ink:#14161a; --ink-2:#4d545f; --ink-3:#79808d;
+  --rule:#e0e3e9; --rule-2:#c8cdd6;
+  --accent:#c81e22; --accent-soft:#fbecec;
+  --ref:#215fa8; --ref-soft:#e9f0f9;
+  --ok:#1a6647; --ok-soft:#e6f2ec;
+  --warn:#8a5a09; --warn-soft:#fbf2df;
+  --shadow:0 1px 2px rgba(20,22,26,.05), 0 8px 24px -14px rgba(20,22,26,.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:#131519; --surface:#191c22; --surface-2:#20242c;
+    --ink:#eceef2; --ink-2:#aab1bd; --ink-3:#828a97;
+    --rule:#2b303a; --rule-2:#3b414c;
+    --accent:#f2665f; --accent-soft:#30201f;
+    --ref:#7cb0ee; --ref-soft:#1a2431;
+    --ok:#5fc79a; --ok-soft:#16261f;
+    --warn:#e0aa54; --warn-soft:#2a2317;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 24px -14px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:#131519; --surface:#191c22; --surface-2:#20242c;
+  --ink:#eceef2; --ink-2:#aab1bd; --ink-3:#828a97;
+  --rule:#2b303a; --rule-2:#3b414c;
+  --accent:#f2665f; --accent-soft:#30201f;
+  --ref:#7cb0ee; --ref-soft:#1a2431;
+  --ok:#5fc79a; --ok-soft:#16261f;
+  --warn:#e0aa54; --warn-soft:#2a2317;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 24px -14px rgba(0,0,0,.8);
+}
+
+* { box-sizing:border-box; }
+body {
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size:16px; line-height:1.62; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:1080px; margin:0 auto; padding:0 28px 96px; }
+.col  { max-width:66ch; }
+
+header.mast { padding:60px 0 30px; border-bottom:1px solid var(--rule); }
+.kicker {
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--accent); margin:0 0 14px;
+}
+h1 {
+  font-family:Spectral, Georgia, serif; font-weight:600;
+  font-size:clamp(34px, 5vw, 50px); line-height:1.1; letter-spacing:-.015em;
+  margin:0 0 16px; text-wrap:balance; max-width:19ch;
+}
+.dek { font-size:18px; line-height:1.6; color:var(--ink-2); margin:0; max-width:62ch; }
+.dek em { font-style:normal; color:var(--ink); font-weight:500; }
+
+.meta {
+  display:flex; flex-direction:column; gap:5px; margin-top:26px;
+  font-family:"IBM Plex Mono", monospace; font-size:12.5px; color:var(--ink-3);
+}
+.meta b { color:var(--ink-2); font-weight:500; }
+
+section { padding-top:52px; }
+.eyebrow {
+  font-family:"IBM Plex Mono", monospace; font-size:11.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
+  margin:0 0 10px;
+}
+h2 {
+  font-family:Spectral, Georgia, serif; font-weight:600;
+  font-size:27px; line-height:1.24; letter-spacing:-.01em;
+  margin:0 0 18px; text-wrap:balance;
+}
+h3 {
+  font-family:"IBM Plex Sans", sans-serif; font-weight:600;
+  font-size:17px; margin:0 0 8px; line-height:1.4;
+}
+p { margin:0 0 16px; }
+.col p, .col ul, .col ol { max-width:66ch; }
+ul, ol { padding-left:1.15em; margin:0 0 16px; }
+li { margin-bottom:7px; }
+code, .mono {
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-size:.875em; background:var(--surface-2);
+  padding:.12em .38em; border-radius:3px; color:var(--ink);
+}
+a { color:var(--ref); text-underline-offset:2px; }
+a:focus-visible, summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
+
+.findings { display:grid; gap:20px; margin:6px 0 8px; }
+.finding {
+  background:var(--surface); border:1px solid var(--rule);
+  border-left:3px solid var(--tone, var(--rule-2));
+  border-radius:0 6px 6px 0; padding:20px 24px 6px;
+}
+.finding.sev  { --tone:var(--accent); }
+.finding.med  { --tone:var(--warn); }
+.finding.ok   { --tone:var(--ok); }
+.ftag {
+  display:inline-block; font-family:"IBM Plex Mono", monospace;
+  font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+  padding:3px 8px; border-radius:3px; margin-bottom:10px;
+}
+.sev .ftag { background:var(--accent-soft); color:var(--accent); }
+.med .ftag { background:var(--warn-soft);   color:var(--warn); }
+.ok  .ftag { background:var(--ok-soft);     color:var(--ok); }
+
+.pair {
+  display:flex; flex-wrap:wrap; gap:0 34px; margin:4px 0 18px;
+  font-variant-numeric:tabular-nums;
+}
+.pair div { display:flex; flex-direction:column; gap:2px; }
+.pair .n {
+  font-family:Spectral, Georgia, serif; font-size:27px; font-weight:600;
+  line-height:1.1; color:var(--ink);
+}
+.pair .n.hi { color:var(--accent); }
+.pair .l {
+  font-family:"IBM Plex Mono", monospace; font-size:11px;
+  letter-spacing:.06em; color:var(--ink-3); text-transform:uppercase;
+}
+
+figure { margin:30px 0 34px; }
+figure img {
+  display:block; width:100%; height:auto;
+  background:#fff; border:1px solid var(--rule); border-radius:6px;
+  box-shadow:var(--shadow);
+}
+figcaption {
+  margin-top:12px; font-size:14px; line-height:1.55; color:var(--ink-2);
+  max-width:78ch;
+}
+figcaption b { color:var(--ink); font-weight:600; }
+
+.tablewrap { overflow-x:auto; margin:8px 0 12px; }
+table { border-collapse:collapse; width:100%; min-width:700px; font-size:14.5px; }
+th, td { text-align:right; padding:11px 14px; border-bottom:1px solid var(--rule); }
+th:first-child, td:first-child { text-align:left; }
+thead th {
+  font-family:"IBM Plex Mono", monospace; font-size:11px;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3);
+  font-weight:500; border-bottom:1px solid var(--rule-2);
+}
+tbody td { font-variant-numeric:tabular-nums; }
+tbody tr.ref td { background:var(--surface-2); }
+td.name { font-family:"IBM Plex Mono", monospace; font-size:13px; white-space:nowrap; }
+.pill {
+  display:inline-block; font-family:"IBM Plex Mono", monospace;
+  font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+  padding:2px 7px; border-radius:10px; white-space:nowrap;
+}
+.pill.done { background:var(--ok-soft);   color:var(--ok); }
+.pill.live { background:var(--ref-soft);  color:var(--ref); }
+.pill.wait { background:var(--surface-2); color:var(--ink-3); }
+.dim { color:var(--ink-3); }
+.up { color:var(--ok); }
+
+.rail { display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); border-radius:6px; overflow:hidden; margin:4px 0 10px; }
+.rail > div { background:var(--surface); padding:13px 18px; display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; }
+.rail .who { font-family:"IBM Plex Mono", monospace; font-size:13px; color:var(--ink); min-width:24ch; }
+.rail .st  { margin-left:auto; }
+.bar { flex-basis:100%; height:3px; background:var(--surface-2); border-radius:2px; overflow:hidden; margin-top:4px; }
+.bar i { display:block; height:100%; background:var(--ref); }
+.bar i.full { background:var(--ok); }
+
+details { border-top:1px solid var(--rule); padding:16px 0 4px; margin-top:20px; }
+summary { cursor:pointer; font-weight:500; font-size:15px; }
+details[open] summary { margin-bottom:12px; }
+
+footer { margin-top:56px; padding-top:22px; border-top:1px solid var(--rule); color:var(--ink-3); font-size:13.5px; }
+@media (max-width:640px) {
+  .wrap { padding:0 18px 64px; }
+  .rail .st { margin-left:0; }
+}
+@media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="kicker">MLMP &middot; Phase U &middot; five done, fourteen in flight</p>
+  <h1>Does the gate survive a change of backbone?</h1>
+  <p class="dek">AdaGate&rsquo;s threshold is unitless, so it should not care which visual encoder it sits on. That prediction has now been tested on five backbones for a full 150 rounds each. <em>All five behave identically:</em> the ungated arm collapses, the gated arm holds, and the firing rate lands in the same narrow band without anything being re-tuned.</p>
+  <div class="meta">
+    <span><b>Dataset</b> &nbsp;ACDC &middot; fog / night / rain / snow &middot; 150 rounds &middot; batch 1 &middot; seed 0</span>
+    <span><b>Method</b> &nbsp;&nbsp;deyo_mlmp_adagate_continual &middot; growing_scaled &middot; base_rst 0.01</span>
+    <span><b>Updated</b> &nbsp;2026-09-05 01:20 &middot; five pairs complete &middot; 19 arms running concurrently</span>
+  </div>
+</header>
+
+<section class="col">
+  <p class="eyebrow">Why this experiment</p>
+  <h2>The gate&rsquo;s selling point is a threshold that never needs re-tuning</h2>
+  <p>The trigger is a robust <em>z</em>-score of the grad-norm slope against its own recent spread, and the restore depth is an ECDF <em>rank</em>. Neither is expressed in units belonging to a dataset, an objective, or an encoder. That predicts one number, <code>trend_thr = 0.5</code>, should produce the same duty cycle everywhere.</p>
+  <p>Two axes already support it: across <b>datasets</b> the firing rate is 0.292 / 0.315 / 0.299, and across <b>objectives</b> 0.292&ndash;0.310 &mdash; a 1.06&times; spread over five published losses. The backbone is the obvious third axis, and it was empty.</p>
+</section>
+
+<section class="col">
+  <p class="eyebrow">The result</p>
+  <h2>Five backbones, five collapses prevented, one duty cycle</h2>
+  <div class="pair">
+    <div><span class="n hi">5 / 5</span><span class="l">backbones, R150</span></div>
+    <div><span class="n">+13.1 to +25.9</span><span class="l">&Delta; mIoU over no gate</span></div>
+    <div><span class="n">1.06&times;</span><span class="l">firing-rate spread</span></div>
+  </div>
+  <p>Every ungated arm shows the same climb&ndash;peak&ndash;collapse shape and ends 13 to 26 mIoU below its gated twin. Every gated arm reaches its plateau early and then does not move: ClearCLIP ViT-L/14 peaks 32.09 at round 81 and finishes 31.91; ClearCLIP ViT-B/16 peaks 31.20 at round 43 and finishes 31.18; NA-CLIP ViT-B/16 peaks 31.08 at round 81 and finishes 31.08; NA-CLIP ViT-B/32 peaks 28.21 at round 121 and finishes 28.17.</p>
+  <p>The number the campaign was actually run for is the last one. Across the five encoders the gate fires on 0.282 / 0.295 / 0.296 / 0.299 / 0.300 of windows &mdash; a <b>1.06&times; spread</b>, which is the same spread the five published objectives gave, and nobody chose it. Pooling all three transfer axes, thirteen runs spanning three datasets, five objectives and five encoders sit between 0.282 and 0.315: a <b>1.12&times;</b> total spread on one unitless constant.</p>
+</section>
+
+<section>
+  <div class="col">
+    <p class="eyebrow">Before any arm finished</p>
+    <h2>Three things the setup work turned up</h2>
+    <p>None of these were the point of the experiment. All three matter more than the arms themselves, and the first is the kind of thing a reviewer finds if we don&rsquo;t.</p>
+  </div>
+
+  <div class="findings">
+
+    <div class="finding sev">
+      <span class="ftag">Affects a published number</span>
+      <h3>The no-adaptation floor of 23.34 was measured with a different prompt setting than every adapted run</h3>
+      <div class="pair">
+        <div><span class="n">23.34</span><span class="l">1 prompt &middot; historical</span></div>
+        <div><span class="n hi">28.21</span><span class="l">7 prompts &middot; matched</span></div>
+        <div><span class="n">+4.87</span><span class="l">gap</span></div>
+      </div>
+      <p>Both no-adapt runs on disk pass an empty <code>--prompt_dir</code>, which falls back to the single template <code>"a photo of a {}"</code>. Every adapted run &mdash; the flagship and all five plug-and-play arms &mdash; passes <code>--prompt_dir prompts.yaml</code>, the 7-template ensemble. Re-running no-adapt with the ensemble gives <b>28.21</b>; re-running it with one prompt reproduces the historical <b>23.89 / 22.09 / 23.85 / 23.53 / 23.34</b> exactly. That isolates the prompt as the only variable, and verifies the harness at the same time.</p>
+      <p>The within-objective &Delta; columns are unaffected &mdash; gate and no-gate always share a prompt setting. What changes is the secondary &ldquo;is it above the no-adapt floor?&rdquo; column of the plug-and-play table. Against 28.21, only <b>Ours (31.92)</b> is clearly above. DELTA (28.59) becomes marginal; SAR (27.79), MLMP (23.61) and TENT (22.48) fall below.</p>
+    </div>
+
+    <div class="finding med">
+      <span class="ftag">Would have silently broken the ViT-B arms</span>
+      <h3><code>top_block_exclude</code> hard-coded the number 24</h3>
+      <p>The exclusion test read <code>block_index &gt;= (24 - top_block_exclude)</code>. On ViT-L/14 that is correct: 24 blocks, <code>tbe=6</code> freezes the top six and 74 of 100 LayerNorm params adapt. ViT-B/16 has only 12 blocks, so <code>24 - 3 = 21</code> matches nothing and the flag <b>froze nothing at all</b>. Since this flag is worth about 5.7 mIoU on TENT, an unnoticed no-op would have made the ViT-B arm meaningless.</p>
+      <p>It now reads encoder depth from the model. Verified against the old logic on both backbones: ViT-L/14 is <b>bit-identical</b> at <code>tbe</code> 0 / 3 / 6 (98 / 86 / 74 params), so all 241 historical runs still reproduce; ViT-B/16 at <code>tbe=3</code> now gives 38 of 50 &mdash; the same fraction of the encoder, which is what &ldquo;no re-tuning&rdquo; has to mean across depths.</p>
+    </div>
+
+    <div class="finding ok">
+      <span class="ftag">Latent crash, now fixed</span>
+      <h3>Multi-layer output under <code>arch='vanilla'</code> raised <code>UnboundLocalError</code></h3>
+      <p>In the visual forward pass, <code>final_x</code> was assigned only in the last-layer branch, so asking a vanilla-architecture model (SCLIP, plain CLIP) for intermediate layers crashed outright. It had never surfaced because those two have only ever run with <code>vision_outputs=(-1,)</code>, and MLMP&rsquo;s 18-layer UAML has only ever run on <code>arch='reduced'</code>.</p>
+      <p>With the fix it runs &mdash; and then tells us something worth keeping. SCLIP on ViT-B/16 scores <b>6.61</b> mIoU with a 9-layer UAML, against a <b>26.54</b> zero-shot floor. <code>arch='reduced'</code> exposes the <em>attention branch</em> at each depth, which stays in the text-aligned space, so averaging depths is meaningful; <code>arch='vanilla'</code> exposes the <em>full residual stream</em>, and averaging that across nine depths destroys the alignment. So the method carries a real, statable scope condition: it needs an OVSS formulation exposing reduced dense features at multiple depths. NA-CLIP and ClearCLIP do; SCLIP and vanilla CLIP do not.</p>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <p class="eyebrow">Arm selection</p>
+    <h2>Which backbones are fair targets, decided by measurement rather than preference</h2>
+    <p>Ten zero-shot configurations were measured first, at roughly 30&nbsp;s each, under the matched 7-prompt protocol. Two candidates were then eliminated on the evidence: SCLIP at ViT-L/14 (15.51) and vanilla CLIP at either scale (3&ndash;5) sit so far below everything else that adapting from them would measure the backbone&rsquo;s brokenness rather than the gate.</p>
+  </div>
+  <figure>
+    <img src="__IMG_FLOOR__" alt="Horizontal bar chart of zero-shot ACDC mIoU for ten OVSS configurations. NA-CLIP and ClearCLIP sit near 28 to 29 at both ViT-L/14 and ViT-B/16; NA-CLIP ViT-B/32 is 23.77; SCLIP ViT-L/14 is 15.51; vanilla CLIP is 3.36 and 5.17. A separate blue bar shows the 1-prompt NA-CLIP ViT-L/14 measurement at 23.34.">
+    <figcaption><b>Figure 1.</b> Zero-shot mIoU on ACDC, no adaptation, 7-prompt ensemble. Red bars are the three arms carried forward. Note that ViT-B/16 is <em>not</em> worse than ViT-L/14 here &mdash; it is slightly better, which makes it a genuine test rather than a downgrade. The blue bar is the historical 1-prompt measurement, shown only to document the protocol gap.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="col">
+    <p class="eyebrow">Results, in flight</p>
+    <h2>Four backbones, one unchanged configuration</h2>
+    <p>Every arm is the flagship command with only the backbone-dependent quantities changed: the encoder itself, <code>top_block_exclude</code>, and the UAML depth &mdash; the latter two held at the same <em>fraction</em> of the encoder (24 blocks &rarr; 6 and 18 layers; 12 blocks &rarr; 3 and 9). Learning rate, <code>base_rst</code>, <code>trend_thr</code>, <code>lag_mode</code> and every DeYO/MLMP hyperparameter are untouched. Each arm carries its own no-gate control at <code>--base_rst 0.0</code>.</p>
+  </div>
+  <figure>
+    <img src="__IMG_TRAJ__" alt="Four panels of mean mIoU against continual round. The NA-CLIP ViT-L/14 reference panel shows the no-gate run peaking near 33 around round 35 then collapsing to about 6 by round 150, while the gated run holds near 32 throughout. The other three panels are partially drawn because those runs are still in progress.">
+    <figcaption><b>Figure 2.</b> 150 continual rounds per backbone, gate against its own no-gate control, with the matched no-adapt floor dotted. All four are complete. The shape repeats without exception: the ungated run climbs, peaks between rounds 22 and 35, and collapses; the gated run concedes roughly 1.5 mIoU of peak and then holds it to round 150. ViT-B/32 is the strictest case &mdash; its ungated arm peaks <em>above</em> the gated one at 28.32 before falling to 14.82, so the gate is trading peak for retention rather than simply being better everywhere.</figcaption>
+  </figure>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Backbone</th><th>No-adapt</th><th>No gate</th><th>+ AdaGate</th><th>&Delta;</th><th>Firing</th><th>State</th></tr>
+      </thead>
+      <tbody>__TABLE_ROWS__</tbody>
+    </table>
+  </div>
+  <p class="col" style="font-size:14px; color:var(--ink-2)">&Delta; is taken at the last round both members of a pair have reached, so partial rows still compare like with like. An early &Delta; near zero is expected and is not yet a result &mdash; the no-gate arm simply has not reached the round where it collapses. ViT-B/16 has now passed that point, which is why its &Delta; has started to open.</p>
+</section>
+
+<section>
+  <div class="col">
+    <p class="eyebrow">The claim under test</p>
+    <h2>Duty cycle is the number to watch, not mIoU</h2>
+    <p>The prediction was that the backbone arms would land in the band the dataset and objective axes already occupy, without anyone choosing it. They did: 0.282 (ViT-B/16), 0.295 (ViT-B/32), 0.296 (NA-CLIP ViT-L/14), 0.300 (ClearCLIP ViT-L/14). ViT-B/16 is the low end and sits just under the published 0.292&ndash;0.315 band; the two ViT-L/14 encoders are inside it. This is the third independent axis, and it is the cleanest of the three.</p>
+  </div>
+  <figure>
+    <img src="__IMG_TRANSFER__" alt="Horizontal dot plot of gate firing rate grouped into three transfer axes. Across datasets: ACDC 0.292, VOC20 0.315, Cityscapes 0.299. Across objectives: DELTA 0.292, Ours 0.298, SAR 0.299, TENT 0.308, MLMP 0.310. Across backbones: NA-CLIP ViT-L/14 at 0.296 filled, with ClearCLIP ViT-L/14 and NA-CLIP ViT-B/16 hollow because they are in progress. A shaded band marks the published range 0.292 to 0.315.">
+    <figcaption><b>Figure 3.</b> Gate firing rate on all three transfer axes, all runs complete. The shaded band is the <em>published</em> range (datasets and objectives); the backbone axis was never tuned to land in it. The reference run recomputes to 0.296, consistent with the 0.298 reported in the objectives table.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="col">
+    <p class="eyebrow">Status</p>
+    <h2>Nine more backbones, and a scheduler that packs the cards</h2>
+    <p>Five pairs are finished at round 150. Fourteen more arms are running concurrently, covering four OVSS formulations that did not exist in this codebase two hours ago, plus a resolution variant and the seed-variance runs.</p>
+    <p><b>SCLIP has been rescued.</b> Its earlier 15.51 was blamed on the backbone; it was actually the output branch. SCLIP's attention paired with <code>arch='reduced'</code> &mdash; so the dense features come from the text-aligned attention branch rather than the full residual stream &mdash; scores <b>29.63</b> at ViT-L/14 and <b>29.73</b> at ViT-B/16, the best ViT-B floor measured. That is a 14-point swing from a one-line change, and it confirms the scope condition diagnosed earlier was the right one.</p>
+    <p>Three of the new formulations now sit <em>above</em> our own default zero-shot: ClearCLIP q-q at 29.97, SCLIP-reduced at 29.63, NA-CLIP Gaussian-only at 29.29, against NA-CLIP's 28.21. The backbone this project has used throughout is not the strongest one available.</p>
+  </div>
+  <div class="rail">__RAIL__</div>
+  <div class="col">
+    <h3>Packing the GPUs was worth measuring, not assuming</h3>
+    <p>The cards are 97.8&nbsp;GB and a ViT-L/14 arm at batch 1 peaks near 16&nbsp;GB, so the scheduler now admits a job whenever a card has 22&nbsp;GB free rather than waiting for the card to be idle. The gain is real and large:</p>
+    <div class="pair">
+      <div><span class="n">0.57</span><span class="l">rounds/min &middot; 1 run</span></div>
+      <div><span class="n">3.77</span><span class="l">rounds/min &middot; 13 runs</span></div>
+      <div><span class="n hi">4.55</span><span class="l">rounds/min &middot; 19 runs</span></div>
+    </div>
+    <p>Eight times the aggregate throughput of a single job. The cards had been reporting 90&ndash;100&nbsp;% &ldquo;utilization&rdquo; the whole time, which only means some kernel was resident &mdash; at batch 1 the SMs were mostly idle between launches. But the last step shows saturation arriving: 46&nbsp;% more jobs bought 21&nbsp;% more throughput, so this is where the packing stops. Free VRAM is no longer the constraint; compute is.</p>
+    <p>Two caveats worth stating plainly. This contends for compute with another user's jobs on the same six cards &mdash; it is the right trade against leaving 80&nbsp;GB idle per card, but it is a choice, not a free lunch. And the per-arm wall-clock is now much slower than an uncontended run; the estimate for the fourteen in flight is roughly ten hours.</p>
+    <details>
+      <summary>How to reproduce or refresh this</summary>
+      <ul>
+        <li><span class="mono">bash bash/backbone_status.sh</span> &mdash; scheduler state, every arm's round count, live processes, GPUs, figure timestamps.</li>
+        <li><span class="mono">bash bash/backbone_smoke.sh &lt;gpu&gt; &lt;backbone&gt; [ovss_type]</span> &mdash; one-round zero-shot floor for a candidate backbone.</li>
+        <li><span class="mono">bash bash/backbone_ablation.sh list</span> &mdash; the arm table; then <span class="mono">&lt;arm&gt; &lt;gpu&gt; [rounds]</span> to run one.</li>
+        <li><span class="mono">NEED_MIB=22000 WORKERS_PER_GPU=2 bash bash/job_pool.sh &lt;jobfile&gt; &lt;gpu&gt;...</span> &mdash; the scheduler. Appending lines to the job file while it runs works; it re-reads on every pop, and several instances can share one job file safely.</li>
+        <li><span class="mono">python plot_backbone.py</span> &mdash; regenerates all three figures plus the md and tex tables. Panels appear as arms produce data and the grid resizes itself.</li>
+        <li><span class="mono">python report/build_report.py</span> &mdash; rebuilds this page from <span class="mono">report/backbone_report_src.html</span> plus whatever is on disk.</li>
+        <li><span class="mono">kill $(cat save/_backbone_logs/pool.pid)</span> &mdash; stops a scheduler; jobs already running continue. Never <span class="mono">pkill -f</span> on the script name: the pattern matches the killing shell's own command line.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<footer>
+  Interim report &mdash; ACDC, 150 rounds, seed 0. Figures regenerate from <span class="mono">save/ACDCDataset/backbone_ablation/</span> and <span class="mono">save/ACDCDataset/backbone_smoke/</span>. The numbers on this page were read on 2026-09-05 at 01:20, with five backbone pairs complete at round 150 and fourteen arms in flight.
+</footer>
+
+</div>

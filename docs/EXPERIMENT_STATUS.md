@@ -1286,3 +1286,103 @@ per-dataset calibration.
 ---
 
 *End of research-arc document. For any detail not covered here, follow the reading map in §13.*
+## 20. Phase T: plug-and-play campaign + the `top_block_exclude` discovery (2026-09-02 → 09-04)
+
+Paper planning session (ARS `/ars-plan`). Full running notes in the session memory
+`paper_writing_2026-09.md`. Method carried forward is unchanged: **`gradnorm_scaled`** =
+`deyo_mlmp_adagate_continual --shallow_cap_mode growing_scaled --base_rst 0.01
+--top_block_exclude 6 --lr 5e-6` (`save/ACDCDataset/batch_ablation/gradnorm_scaled_b1/`,
+ACDC mean 31.74 / R150 31.92). **Label it "Ours" in all figures.**
+
+### T-1. Plug-and-play: the same gate on four *published* base objectives
+
+New methods (subclasses of `DeYOMLMPAdaGateContinual`; the gate is inherited unchanged and
+學長's file was not touched): `tent_adagate_continual`, `mlmp_adagate_continual`,
+`delta_adagate_continual`, `sar_adagate_continual`, plus `cma_adagate_continual` (appendix
+only — CMA is ours, not a published method). Runner `bash/plugplay_adagate.sh`.
+
+Each subclass overrides `_is_excluded` so `--top_block_exclude 0` freezes **nothing**, giving
+all 100 visual LN params — exactly what `tent/mlmp/delta/sar_continual` train. That makes the
+**already-published run a valid no-gate control**, so only one arm per base method is needed.
+
+ACDC, 150 rounds, batch 1, LR 1e-5, seed 0:
+
+| base objective | no gate R150 | +AdaGate R150 | Δ | gated R1→R150 | above no-adapt 23.34? |
+|---|---|---|---|---|---|
+| TENT (ICLR'21) | 7.90 | 22.48 | +14.58 | −5.88 | no |
+| MLMP-continual (NeurIPS'25) | 1.53 | 23.61 | **+22.08** | −6.14 | +0.3 only |
+| DELTA (ICLR'23) | 12.24 | **28.59** | +16.35 | **+0.36** | yes |
+| SAR (ICLR'23) | 25.31 (oscillates) | 27.79 | +2.48 | −0.60 | yes |
+
+**The duty cycle transfers across objectives**: one unitless threshold, five objectives, firing
+0.292 / 0.298 / 0.299 / 0.308 / 0.310 (DELTA / Ours / SAR / TENT / MLMP) = **1.06× spread**.
+Together with the cross-dataset 0.29/0.32/0.30 of §19, `trend_thr` self-calibration now has
+evidence on two independent axes.
+
+**Scope the claim carefully.** Supported: *the same gate at the same threshold, with no
+re-tuning, prevents catastrophic collapse and improves the 150-round endpoint of four published
+objectives by +2.5 to +22.1 mIoU.* NOT supported: that it lifts every objective above the
+no-adaptation floor (TENT 22.48 < 23.34), nor that any objective keeps improving (only DELTA
+grows). Also: every published CTTA method here that actually collapses is entropy-family, so
+the claim scopes to **entropy-based** objectives — CoTTA never collapses and SHOT dies at R1,
+so neither can serve as a non-entropy data point.
+
+SAR is a **replacement, not an addition**: its own hard recovery (Filter C) is disabled so two
+controllers do not fight, following `sar_divgate_continual.py`.
+
+### T-2. `top_block_exclude` — a default nobody had ablated
+
+ViT-L/14's visual encoder has 50 LayerNorm modules (`ln_pre` + 24 blocks × {ln_1, ln_2} +
+`ln_post`) = 100 params. The AdaGate family defaults to `--top_block_exclude 6`, which freezes
+`ln_post` + `resblocks 18-23` → **only 74 adapt, all in the lower 18 blocks**. It entered with
+the GDG-PA / smooth-anchor lineage (`7039e92`, `fce2eee`); **no published baseline has the flag
+at all**. Across every `cmd.sh` under `save/`: **241 runs used `6`, and the only runs at `0`
+are from this campaign.**
+
+It is worth ~5.7 mIoU on TENT, and the mechanism is visible in the gate log:
+
+| TENT + AdaGate | R150 | trend | H_margin drop | deep-restore | collapse-regime |
+|---|---|---|---|---|---|
+| 74 params (tbe=6) | **28.15** | flat | **−2.3 %** | 19.5 % | 40.6 % |
+| 100 params (tbe=0) | **22.48** | −5.9 | **−55.4 %** | 30.5 % | 97.4 % |
+
+Class-marginal collapse happens in the **top blocks**; freezing them removes the mechanism,
+whereas the gate only treats the symptom. Two independent routes protect the marginal —
+freeze the top blocks, or reweight by inverse class frequency (DELTA's DOT keeps H at −3.8 %
+even at 100 params). Either suffices; with neither, the gate can only slow the decline.
+For TENT it is a trade (ungated peak 32.90@R19 at 100 params vs 28.26@R4 at 74), but
+DeYO+MLMP peaks 33.50@R34 *at 74 params*, so its headroom does not live in the top blocks.
+
+**Ablation running** (2026-09-04): `bash/ablation_allln.sh` →
+`save/ACDCDataset/ablation/adagate_allln_b1/` — Ours with all 100 params via
+`adapt/deyo_mlmp_adagate_allln_continual.py` (only `_is_excluded` differs; the parent at
+`tbe=0` would give 98 because it always excludes `ln_post`). This is what says how much of
+31.92 is the gate and how much is the frozen top.
+
+### T-3. Two corrections to earlier claims
+
+- **Ours does not "keep improving"**: 29.80 → 30.98 (R10) → **31.93 (R25)** → 31.90 / 31.83 /
+  31.92 (R50/100/150). Fast early adaptation, then 125 rounds of retention. The best-state
+  anchor freezes early in *every* run (last refresh at window 122–585 of 1218), so the climb is
+  not a ratcheting anchor — it is the base objective still having signal. How long an objective
+  has signal can be read off where its **ungated** arm peaks: TENT@74p R4, DELTA@100p R12,
+  TENT@100p R19, DeYO+MLMP@74p R34.
+- **Grad-norm lead time is a partial negative**: on the ungated runs the sustained grad-norm
+  rise precedes the mIoU degradation onset by **+18 rounds on ACDC but −30 on Cityscapes**
+  (i.e. it lags). Do not claim a lead. The defensible claim is that grad_norm is a label-free
+  surrogate for the unobservable mIoU (Pearson −0.955 / −0.783); note that **H_margin is the
+  more consistent correlate** (+0.952 / +0.947 on both). The trigger fires from R0–R3 at ~31 %
+  of windows, so the gate is a continuous controller at a calibrated duty cycle, not an alarm.
+
+### T-4. Figures and the protocol trap
+
+`plot_tension.py` → `figures/tension/acdc_tension.*` (methods that improve collapse; methods
+that never collapse never improve). `plot_plugplay.py` → `figures/plugplay/acdc_plugplay.*`
+(2×2 gate vs no-gate). `plot_tent74.py` → `figures/plugplay/acdc_tent74.*`.
+
+**Only ACDC has the classic baselines and Ours under one protocol.** Cityscapes baselines are
+`subset 101` / 4 corruptions (no-adapt 18.47) while Ours is `subset 100` / weather-5 (no-adapt
+20.56); VOC20 baselines are `full` / 4 corruptions (no-adapt 71.65) while Ours is `subset 100`
+/ weather-5. Never overlay across those groups.
+
+---

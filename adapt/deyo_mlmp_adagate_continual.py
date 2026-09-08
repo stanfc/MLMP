@@ -653,27 +653,40 @@ class DeYOMLMPAdaGateContinual:
         return torch.stack(text_features, dim=1).to(self.device)
 
     @staticmethod
-    def _is_excluded(nm, top_block_exclude):
+    def _num_visual_blocks(model, default=24):
+        """Depth of the visual transformer, so `top_block_exclude` means the same
+        FRACTION of the encoder on every backbone (ViT-L/14 has 24 blocks,
+        ViT-B/16 and ViT-B/32 have 12).  Falls back to 24, which keeps every
+        historical ViT-L/14 run bit-identical."""
+        try:
+            return len(model.transformer.resblocks)
+        except AttributeError:
+            return default
+
+    @staticmethod
+    def _is_excluded(nm, top_block_exclude, num_blocks=24):
         if 'ln_post' in nm:
             return True
         m = re.search(r'resblocks\.(\d+)\.', nm)
-        if m and int(m.group(1)) >= (24 - top_block_exclude):
+        if m and int(m.group(1)) >= (num_blocks - top_block_exclude):
             return True
         return False
 
     @classmethod
     def set_ln_grads(cls, model, top_block_exclude=6):
+        nb = cls._num_visual_blocks(model)
         model.requires_grad_(False)
         for nm, m in model.named_modules():
-            if isinstance(m, nn.LayerNorm) and not cls._is_excluded(nm, top_block_exclude):
+            if isinstance(m, nn.LayerNorm) and not cls._is_excluded(nm, top_block_exclude, nb):
                 m.requires_grad_(True)
         return model
 
     @classmethod
     def collect_ln_params(cls, model, top_block_exclude=6):
+        nb = cls._num_visual_blocks(model)
         params, names = [], []
         for nm, m in model.named_modules():
-            if isinstance(m, nn.LayerNorm) and not cls._is_excluded(nm, top_block_exclude):
+            if isinstance(m, nn.LayerNorm) and not cls._is_excluded(nm, top_block_exclude, nb):
                 for np_, p in m.named_parameters():
                     if np_ in ['weight', 'bias']:
                         params.append(p)

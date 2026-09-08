@@ -73,6 +73,12 @@ from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
 from .deyo_mlmp_promptw_hmgate2_continual import DeYOMLMPPromptWHMGate2Continual
 from .deyo_mlmp_textres_hmgate2_continual import DeYOMLMPTextResHMGate2Continual
 from .deyo_mlmp_adagate_continual import DeYOMLMPAdaGateContinual
+from .tent_adagate_continual import TENTAdaGateContinual
+from .mlmp_adagate_continual import MLMPAdaGateContinual
+from .cma_adagate_continual import CMAAdaGateContinual
+from .delta_adagate_continual import DELTAAdaGateContinual
+from .sar_adagate_continual import SARAdaGateContinual
+from .deyo_mlmp_adagate_allln_continual import DeYOMLMPAdaGateAllLNContinual
 from .deyo_mlmp_hmgate2_emaeval_continual import DeYOMLMPHMGate2EmaEvalContinual
 from .deyo_mlmp_hmgate2_mseval_continual import DeYOMLMPHMGate2MSEvalContinual
 from .deyo_mlmp_hmgate2_distill_continual import DeYOMLMPHMGate2DistillContinual
@@ -215,6 +221,12 @@ METHOD_CLASSES = {
     'deyo_mlmp_textres_hmgate2_continual': DeYOMLMPTextResHMGate2Continual,
     # GDG-PA with self-calibrating trigger (normalised trend) + lag (budget fraction)
     'deyo_mlmp_adagate_continual': DeYOMLMPAdaGateContinual,
+    'tent_adagate_continual': TENTAdaGateContinual,
+    'mlmp_adagate_continual': MLMPAdaGateContinual,
+    'cma_adagate_continual': CMAAdaGateContinual,
+    'delta_adagate_continual': DELTAAdaGateContinual,
+    'sar_adagate_continual': SARAdaGateContinual,
+    'deyo_mlmp_adagate_allln_continual': DeYOMLMPAdaGateAllLNContinual,
     'deyo_mlmp_hmgate2_emaeval_continual': DeYOMLMPHMGate2EmaEvalContinual,
     'deyo_mlmp_hmgate2_mseval_continual': DeYOMLMPHMGate2MSEvalContinual,
     'deyo_mlmp_hmgate2_distill_continual': DeYOMLMPHMGate2DistillContinual,

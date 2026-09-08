@@ -41,6 +41,44 @@ def load_ovss(ovss_type, ovss_backbone, device='cpu', classes=None, catseg_check
         ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
         tokenize = clip_tokenize
 
+    elif ovss_type == 'clearclip':
+        # ClearCLIP (ECCV'24): last-block self-self attention with the residual
+        # and the FFN removed from the dense output.  In this codebase that is
+        # exactly arch='reduced' (out_features take `reduced`, i.e. the attention
+        # branch alone) + attn_strategy='kk' (k-k self-self).  It is NA-CLIP
+        # minus the Gaussian neighbourhood prior, which makes it the tightest
+        # possible control for the NA-CLIP arm.  gaussian_std is unused here.
+        arch = "reduced"
+        attn_strategy = "kk"
+        gaussian_std = 5.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type in ('maskclip', 'clearclip_qq', 'vvclip', 'naclip_nonly', 'sclip_reduced'):
+        # Four further training-free OVSS formulations, all sharing the same CLIP
+        # weights and all using arch='reduced' so the dense features stay in the
+        # text-aligned attention-branch space that MLMP's multi-level UAML average
+        # requires (arch='vanilla' does not -- see the SCLIP note in
+        # bash/backbone_ablation.sh).
+        #   maskclip      MaskCLIP (ECCV'22)  -- no spatial mixing; the canonical
+        #                 training-free OVSS baseline
+        #   clearclip_qq  ClearCLIP (ECCV'24) as published -- q-q self-self
+        #                 (ovss_type 'clearclip' is the k-k variant)
+        #   vvclip        v-v self-self, the CLIP-Surgery / GEM family
+        #   naclip_nonly  NA-CLIP's Gaussian prior WITHOUT the k-k term -- an
+        #                 ablation of our own default rather than a new method
+        arch = "reduced"
+        #   sclip_reduced SCLIP's csa attention emitted through the reduced branch,
+        #                 i.e. SCLIP made compatible with MLMP's UAML stack
+        attn_strategy = {'maskclip': 'identity', 'clearclip_qq': 'qq',
+                         'vvclip': 'vv', 'naclip_nonly': 'nonly',
+                         'sclip_reduced': 'csa'}[ovss_type]
+        gaussian_std = 5.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
     elif ovss_type == 'catseg':
         from ovss.catseg.wrapper import CATSegWrapper
         from ovss.catseg.third_party.clip import tokenize as catseg_tokenize

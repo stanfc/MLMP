@@ -228,8 +228,14 @@ class VisionTransformer(nn.Module):
     # nonly: Neighbourhood Only, kk: KK-Similarity, csa: SCLIP, vanilla: CLIP
     def set_params(self, arch, attn_strategy, gaussian_std):
         assert arch in ['reduced', 'vanilla']
-        assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla']
-        assert attn_strategy != 'csa' or arch == 'vanilla'
+        assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla', 'qq', 'vv', 'identity']
+        # csa was originally restricted to arch='vanilla' because that is how
+        # SCLIP is published. But arch='vanilla' emits the full residual stream,
+        # which MLMP's multi-level UAML average cannot use (SCLIP@ViT-B/16 scores
+        # 6.61 with 9-layer UAML against a 26.54 floor). Pairing csa with
+        # arch='reduced' keeps SCLIP's q-q + k-k attention while emitting the
+        # text-aligned attention branch, which is what makes it UAML-compatible.
+        # ovss_type 'sclip' still maps to vanilla+csa, so SCLIP itself is unchanged.
         assert gaussian_std > 0 or attn_strategy not in ['naclip', 'nonly']
         self.arch, self.attn_strategy, self.gaussian_std = arch, attn_strategy, gaussian_std
 
@@ -264,6 +270,15 @@ class VisionTransformer(nn.Module):
                 reduced = self.custom_attn("vanilla", blk.attn, blk.ln_1(x), n_patches) ## for the purpose of evaluation we can compute 2 types, one for feedforward and one for the evaluation
                 x = x + reduced
                 x = x + blk.mlp(blk.ln_2(x))
+                # arch='vanilla' reads `final_x` (the block's FULL output, i.e.
+                # attention + residual + FFN) for every layer it is asked for.
+                # Only the last-layer branch below used to define it, so any
+                # multi-layer request (MLMP/UAML) under arch='vanilla' raised
+                # UnboundLocalError -- which is why SCLIP/vanilla-CLIP had only
+                # ever been run with vision_outputs=(-1,).  For an intermediate
+                # layer the full output is exactly `x` after the two lines above.
+                # arch='reduced' appends `reduced` instead and is untouched.
+                final_x = x
 
             else: 
                 # Note that the att_strategy only will be applied to the last layer not intermediate layers
@@ -373,7 +388,11 @@ class VisionTransformer(nn.Module):
                 attn_weights = torch.bmm(k, k.transpose(1, 2)) * scale
                 omega = addition
             elif attn_strategy == 'nonly':
-                attn_weights = torch.zeros((num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
+                # bsz * num_heads, not num_heads: q/k/v above are folded to
+                # (bsz*num_heads, tokens, head_dim), so the zero matrix has to
+                # match. As written this branch only ran when bsz == 1, i.e.
+                # never under patched inference (36 patches/image here).
+                attn_weights = torch.zeros((bsz * num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
                 omega = addition * (scale * torch.einsum('hop,hPO->hpP', q.norm(dim=2).unsqueeze(1),
                                                          k.norm(dim=2).unsqueeze(2)).mean().item())
             else:
@@ -392,6 +411,25 @@ class VisionTransformer(nn.Module):
         elif attn_strategy == 'kk':
             attn_weights = torch.bmm(k * scale, k.transpose(1, 2))
             attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'qq':
+            # ClearCLIP (ECCV'24) as published: q-q self-self attention. The 'kk'
+            # branch above is the k-k variant; NA-CLIP is 'kk' plus a Gaussian
+            # neighbourhood prior.
+            attn_weights = torch.bmm(q * scale, q.transpose(1, 2))
+            attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'vv':
+            # v-v self-self attention (the CLIP-Surgery / GEM family). Values are
+            # already the quantity that gets read out, so correlating them keeps
+            # the readout space consistent.
+            attn_weights = torch.bmm(v * scale, v.transpose(1, 2))
+            attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'identity':
+            # MaskCLIP (ECCV'22): no spatial mixing at all in the last block --
+            # each token reads out its own value through out_proj. With
+            # arch='reduced' (residual and FFN dropped) this is exactly MaskCLIP's
+            # dense readout, and it is the canonical training-free OVSS baseline.
+            attn_weights = torch.eye(num_tokens, dtype=x.dtype, device=x.device)
+            attn_weights = attn_weights.unsqueeze(0).expand(bsz * num_heads, -1, -1)
         else:
             raise NotImplemented(f'attn_strategy {self.attn_strategy} is not implemented')
 

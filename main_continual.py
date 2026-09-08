@@ -711,6 +711,9 @@ def add_method_specific_args(parser, method):
     # evicted); + AdaGate/prompt-weight/text-residual/marginal-diversity-loss variants ---
     elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual',
                     'deyo_mlmp_textres_hmgate2_continual', 'deyo_mlmp_adagate_continual',
+                    'tent_adagate_continual', 'mlmp_adagate_continual',
+                    'cma_adagate_continual', 'delta_adagate_continual',
+                    'sar_adagate_continual', 'deyo_mlmp_adagate_allln_continual',
                     'deyo_mlmp_hmgate2_divloss_continual',
                     'deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_textalign_continual',
                     'deyo_mlmp_hmgate2_logitadj_continual', 'deyo_mlmp_hmgate2_ratchet_continual',
@@ -743,7 +746,10 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--ln_ckpt_every', type=int, default=0,
                             help='dump a LN-weight snapshot every N gate windows '
                                  '(for offline collapse-trajectory analysis); 0=off')
-        if method == 'deyo_mlmp_adagate_continual':
+        if method in ('deyo_mlmp_adagate_continual', 'tent_adagate_continual',
+                      'mlmp_adagate_continual', 'cma_adagate_continual',
+                      'delta_adagate_continual', 'sar_adagate_continual',
+                      'deyo_mlmp_adagate_allln_continual'):
             # self-calibrating trigger (A) and lag (B); see the module docstring for
             # why the absolute slope_deadzone / lag_gain are inert in hmgate2.
             parser.add_argument('--trend_stat', type=str, default='mad',

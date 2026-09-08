@@ -31,7 +31,9 @@ set -u
 POLL="${POLL:-300}"
 SETTLE="${SETTLE:-120}"
 BUFFER="${BUFFER:-8000}"
-GPUS="${GPUS:-0 1 2 3 4 5}"
+# GPU5 EXCLUDED 2026-08-26: lab restricted it for two days. Re-add it after that
+# lifts. GPU1 is another user's; the free-VRAM check keeps us off it when busy.
+GPUS="${GPUS:-0 1 2 3 4}"
 MAXPER="${MAXPER:-1}"          # b8 needs ~79GB: at most one of ours per GPU
 NEED="${NEED:-88000}"
 LR="${LR:-0.00004}"
@@ -45,9 +47,12 @@ mkdir -p save/_batch_ablation_logs
 # base_rst=0 no-gate controls run afterwards; they answer the follow-up "and is the
 # gate the reason?", which is lower priority because the b1 panels already show that
 # contrast starkly (ACDC 31.92 vs 6.04, Cityscapes 24.05 vs 2.79).
+# NOTE: the two gated (gradnorm_scaled) arms are ALREADY RUNNING as of 2026-08-26
+# (ACDC 103/150, Cityscapes 31/150) and are deliberately NOT listed here -- this
+# driver has no notion of "already done", so listing them would launch a SECOND
+# process writing the same save_dir and corrupt both runs. Only the two no-gate
+# controls remain to be placed.
 JOBS="
-acdc:gradnorm_scaled
-cityscapes:gradnorm_scaled
 acdc:deyo_mlmp
 cityscapes:deyo_mlmp
 "

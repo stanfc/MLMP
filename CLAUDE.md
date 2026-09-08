@@ -4,7 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # MLMP — Project Guide for Claude
 
-> **🟩 Newest (2026-08-05, Phase S): `deyo_mlmp_adagate_continual` supersedes GDG-PA as the
+> **🟦 Newest (2026-09-04, Phase T — paper campaign): the method is unchanged
+> (`gradnorm_scaled` = `deyo_mlmp_adagate_continual --shallow_cap_mode growing_scaled
+> --base_rst 0.01`, ACDC 31.74 / R150 31.92 — **call it "Ours" in figures**), but three
+> things were established.** (1) **Plug-and-play verified on four *published* objectives** —
+> TENT / MLMP-continual / DELTA / SAR, R150 +2.5 to +22.1 mIoU with no re-tuning, and the
+> firing rate transfers across objectives (0.292–0.310, 1.06× spread) as well as across
+> datasets. Scope it honestly: all four are entropy-family, and it does **not** lift every
+> objective above the no-adapt floor (TENT 22.48 < 23.34). (2) **`--top_block_exclude 6` had
+> never been ablated** — it freezes `ln_post` + blocks 18–23, so only **74 of 100** LN params
+> adapt, while every published baseline trains all 100; 241 historical runs used `6`. It is
+> worth **5.7 mIoU on TENT** because class-marginal collapse happens in the top blocks. The
+> ablation of Ours at 100 params is running (`bash/ablation_allln.sh`). (3) **Two corrections**:
+> Ours rises only to ~R25 then holds for 125 rounds (not "continual improvement"), and the
+> grad-norm *lead time* does **not** transfer (+18 rounds ACDC, −30 Cityscapes) — claim a
+> label-free surrogate, not a predictor. Full details: **§20** of
+> [docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md).
+>
+> **🟩 Previous (2026-08-05, Phase S): `deyo_mlmp_adagate_continual` supersedes GDG-PA as the
 > configuration to carry forward.** GDG-PA's `slope_deadzone=0.002` and `lag_gain=1500` were
 > measured to be **inert** — the deadzone degenerates to `slope>0` (fires 46–51 % on all three
 > datasets), and lag saturates the cap in 93–99.7 % of active windows (realised lag is binary
