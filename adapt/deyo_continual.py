@@ -156,6 +156,26 @@ class DeYOContinual:
         self.load_model_and_optimizer(
             self.model, self.optimizer, self.model_state, self.optimizer_state)
 
+    def state_dict(self):
+        """Adapt-state checkpoint for mid-stream resume: every tensor
+        currently registered in the optimizer plus optimizer state."""
+        opt_params = [p for g in self.optimizer.param_groups for p in g['params']]
+        return {
+            'params': [p.detach().cpu().clone() for p in opt_params],
+            'optimizer': self.optimizer.state_dict(),
+        }
+
+    def load_state_dict(self, sd):
+        opt_params = [p for g in self.optimizer.param_groups for p in g['params']]
+        with torch.no_grad():
+            for p, saved in zip(opt_params, sd['params']):
+                p.data.copy_(saved.to(device=p.device, dtype=p.dtype))
+        self.optimizer.load_state_dict(sd['optimizer'])
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.device)
+
     # -----------------------------------------------------------
     # Object-destructive transform (paper's Section 3.2)
     # -----------------------------------------------------------

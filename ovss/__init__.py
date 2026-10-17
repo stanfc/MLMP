@@ -1,8 +1,10 @@
+import torch
 import ovss.clip as clip
 from ovss.clip import tokenize as clip_tokenize
 
 
-def load_ovss(ovss_type, ovss_backbone, device='cpu', classes=None, catseg_checkpoint=None):
+def load_ovss(ovss_type, ovss_backbone, device='cpu', classes=None, catseg_checkpoint=None,
+              maft_checkpoint=None):
     """
     Load the OVSS model based on the specified type and backbone.
 
@@ -41,10 +43,84 @@ def load_ovss(ovss_type, ovss_backbone, device='cpu', classes=None, catseg_check
         ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
         tokenize = clip_tokenize
 
+    elif ovss_type == 'clearclip_kk':
+        # ClearCLIP (ECCV'24): last layer drops MLP+residuals (arch=reduced),
+        # k-k self-similarity attention (same formula naclip's 'kk' already had).
+        arch = "reduced"; attn_strategy = "kk"; gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'clearclip_qq':
+        # ClearCLIP (ECCV'24): last layer drops MLP+residuals, q-q self-similarity.
+        arch = "reduced"; attn_strategy = "qq"; gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'vv_attention':
+        # value-value self-similarity -- unpublished third member of the qq/kk/vv
+        # attention-surgery family (ClearCLIP=qq, existing naclip 'kk' path=kk).
+        arch = "reduced"; attn_strategy = "vv"; gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'maskclip':
+        # MaskCLIP (ECCV'22, arxiv 2112.01071): identity attention (no q/k),
+        # value projection + out_proj act as a per-token 1x1 conv.
+        arch = "reduced"; attn_strategy = "maskclip"; gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'sclip_reduced':
+        # SCLIP's csa formula, but with arch=reduced output (bare attention
+        # output, no MLP/residual) instead of SCLIP's original arch=vanilla.
+        arch = "reduced"; attn_strategy = "csa"; gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'naclip_gaussonly':
+        # naclip's existing 'nonly' attn_strategy: pure gaussian-neighbourhood
+        # addition, no k-k similarity term.
+        arch = "reduced"; attn_strategy = "nonly"; gaussian_std = 5.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
+    elif ovss_type == 'maft':
+        # MAFT+ (arxiv 2408.00744): Mask2Former-style, ConvNeXt-CLIP backbone,
+        # open-vocab via mask-proposal + text classification. Not a plain-CLIP
+        # ViT -- see ovss/maft/wrapper.py module docstring for the 3 scoping
+        # decisions this integration makes (no UAML/multi-layer weighting,
+        # ConvNeXt LayerNorm-only adaptation, MAFT+'s own internal detach()
+        # patched out so that adaptation's gradient can actually reach it).
+        from ovss.maft.wrapper import MAFTWrapper
+        if classes is None:
+            raise ValueError("classes must be provided for MAFT+ model")
+        if maft_checkpoint is None:
+            raise ValueError("maft_checkpoint must be provided for MAFT+ model")
+        ovss_model = MAFTWrapper(classes, maft_checkpoint, device=device)
+        tokenize = lambda texts: torch.zeros(len(texts), 1)
+
+    elif ovss_type == 'itaclip':
+        # ported core (attention) mechanism of ITACLIP (arxiv 2411.12044):
+        # SCLIP-style attention at the last layer, blended 50/50 with the
+        # average of that same attention captured at a few intermediate
+        # layers. Does not include ITACLIP's other two components (LLM
+        # class-synonym prompts, inference-time image-augmentation ensemble).
+        arch = "reduced"
+        attn_strategy = "itaclip"
+        gaussian_std = 0.0
+        ovss_model, _ = clip.load(ovss_backbone, device)
+        ovss_model.visual.set_params(arch, attn_strategy, gaussian_std)
+        tokenize = clip_tokenize
+
     elif ovss_type == 'catseg':
         from ovss.catseg.wrapper import CATSegWrapper
         from ovss.catseg.third_party.clip import tokenize as catseg_tokenize
-        import torch
 
         if classes is None:
             raise ValueError("classes must be provided for CAT-Seg model")

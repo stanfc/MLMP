@@ -81,6 +81,8 @@ _ECDF_MIN_HIST = 10
 
 class DeYOMLMPAdaGateContinual:
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
+                 catseg_checkpoint=None,
+                 maft_checkpoint=None,
                  vision_outputs=tuple(range(-1, -19, -1)),
                  prompt_dir='prompts.yaml',
                  deyo_margin_factor=0.5,
@@ -106,6 +108,16 @@ class DeYOMLMPAdaGateContinual:
                  # VOC20 noise ratio ~1.25 exceeds ACDC collapse ratio ~1.24, but
                  # H_margin drops ONLY on real marginal collapse.
                  h_drop_ratio=0.9,
+                 # h_max_mode: 'lifetime' = h_max never decreases (original AdaGate
+                 # behaviour, validated on ACDC/V20-5corr/Cityscapes-5corr). 'decaying'
+                 # = h_max = max(h_margin, h_max_decay*h_max), so a ceiling set during
+                 # an easy stretch relaxes back down as the stream moves to something
+                 # intrinsically harder. Needed once the corruption mix spans a wide
+                 # difficulty range (e.g. all-15-corruption Cityscapes-C): 'lifetime'
+                 # false-triggers collapse_regime on every harder condition because the
+                 # peak gets pinned by whichever corruption happened to be easiest.
+                 h_max_mode='lifetime',
+                 h_max_decay=0.98,
                  maxlag_shallow=6,
                  monitor_interval=50,
                  # --- self-calibrating trigger (A) and lag (B) ---
@@ -168,6 +180,10 @@ class DeYOMLMPAdaGateContinual:
         self.base_rst = float(base_rst)
         self.max_windows = int(max_windows)
         self.h_drop_ratio = float(h_drop_ratio)
+        if h_max_mode not in ('lifetime', 'decaying'):
+            raise ValueError(f"h_max_mode must be lifetime|decaying, got {h_max_mode}")
+        self.h_max_mode = h_max_mode
+        self.h_max_decay = float(h_max_decay)
         self.maxlag_shallow = int(maxlag_shallow)
         self.monitor_interval = int(monitor_interval)
         if trend_stat not in ('abs', 'rel', 'mad', 'tstat'):
@@ -202,7 +218,9 @@ class DeYOMLMPAdaGateContinual:
         self.current_deep = False   # deep (toward permanent best) vs shallow (lag-deque)
         self.best_snapshot = None   # permanent best-state LN snapshot (never evicted)
 
-        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device,
+                                              classes=self.classes, catseg_checkpoint=catseg_checkpoint,
+                                              maft_checkpoint=maft_checkpoint)
         if prompt_dir:
             self.prompt_templates = load_prompts_from_yaml(prompt_dir)
         else:
@@ -550,7 +568,10 @@ class DeYOMLMPAdaGateContinual:
             self.windows_since_h_peak = 0
         else:
             self.windows_since_h_peak += 1
-        self.h_max = max(self.h_max, h_margin)
+        if self.h_max_mode == 'decaying':
+            self.h_max = max(h_margin, self.h_max_decay * self.h_max)
+        else:
+            self.h_max = max(self.h_max, h_margin)
         # collapse regime when H_margin has dropped below a fraction of its peak
         collapse_regime = h_margin < self.h_drop_ratio * self.h_max
 
@@ -654,11 +675,8 @@ class DeYOMLMPAdaGateContinual:
 
     @staticmethod
     def _is_excluded(nm, top_block_exclude):
-        if 'ln_post' in nm:
-            return True
-        m = re.search(r'resblocks\.(\d+)\.', nm)
-        if m and int(m.group(1)) >= (24 - top_block_exclude):
-            return True
+        # top_block_exclude/ln_post exclusion removed -- all 100 LN affine
+        # tensors on ViT-L/14 are now trained, matching original MLMP.
         return False
 
     @classmethod

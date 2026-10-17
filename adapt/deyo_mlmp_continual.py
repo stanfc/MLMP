@@ -38,6 +38,8 @@ REFERENCE_PROMPT = 'a photo of a {}'
 
 class DeYOMLMPContinual:
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
+                 catseg_checkpoint=None,
+                 maft_checkpoint=None,
                  vision_outputs=tuple(range(-1, -19, -1)),
                  prompt_dir='prompts.yaml',
                  deyo_margin_factor=0.5,
@@ -71,7 +73,9 @@ class DeYOMLMPContinual:
         self.top_block_exclude = top_block_exclude
         self.total_batches = 0
 
-        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device,
+                                              classes=self.classes, catseg_checkpoint=catseg_checkpoint,
+                                              maft_checkpoint=maft_checkpoint)
 
         if prompt_dir:
             self.prompt_templates = load_prompts_from_yaml(prompt_dir)
@@ -301,11 +305,8 @@ class DeYOMLMPContinual:
 
     @staticmethod
     def _is_excluded(nm, top_block_exclude):
-        if 'ln_post' in nm:
-            return True
-        m = re.search(r'resblocks\.(\d+)\.', nm)
-        if m and int(m.group(1)) >= (24 - top_block_exclude):
-            return True
+        # top_block_exclude/ln_post exclusion removed -- all 100 LN affine
+        # tensors on ViT-L/14 are now trained, matching original MLMP.
         return False
 
     @classmethod

@@ -52,8 +52,13 @@ class CorruptTransform(BaseTransform):
         if self.cache_dir is not None:
             cache_path = self._cache_path(results.get('img_path', str(img_index)))
             if os.path.exists(cache_path):
-                results['img'] = np.load(cache_path)
-                return results
+                try:
+                    results['img'] = np.load(cache_path)
+                    return results
+                except Exception:
+                    # leftover truncated file from a pre-fix concurrent write;
+                    # fall through and regenerate/overwrite it below.
+                    pass
 
         # Save the current RNG state
         rng_state = np.random.get_state()
@@ -67,10 +72,18 @@ class CorruptTransform(BaseTransform):
         # Restore the original RNG state
         np.random.set_state(rng_state)
 
-        # Save to cache
+        # Save to cache. Write-then-rename so concurrent readers never see a
+        # partially-written file: cache_path is shared across every process
+        # that adapts the same dataset+corruption (keyed only on img_path,
+        # not on method/pid), so running several methods on the same dataset
+        # in parallel means many writers can race on the same cache slot.
+        # A direct np.save(cache_path, ...) is not atomic -- a reader landing
+        # mid-write got a truncated file (EOFError: No data left in file).
         if self.cache_dir is not None:
             os.makedirs(self.cache_dir, exist_ok=True)
-            np.save(cache_path, corrupted)
+            tmp_path = f"{cache_path}.tmp{os.getpid()}.npy"
+            np.save(tmp_path, corrupted)
+            os.replace(tmp_path, cache_path)
 
         results['img'] = corrupted
         return results

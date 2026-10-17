@@ -226,12 +226,19 @@ class VisionTransformer(nn.Module):
         self.addition_cache = dict()
 
     # nonly: Neighbourhood Only, kk: KK-Similarity, csa: SCLIP, vanilla: CLIP
+    # itaclip: SCLIP-style (q-q + k-k) attention at the last layer, blended 50/50
+    # with the average of that same attention captured at a few intermediate
+    # layers (ported from ITACLIP, arxiv 2411.12044 -- layer indices below are
+    # theirs for ViT-B/16's 12 layers; scaled proportionally to whatever depth
+    # this backbone actually has in forward()).
     def set_params(self, arch, attn_strategy, gaussian_std):
         assert arch in ['reduced', 'vanilla']
-        assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla']
-        assert attn_strategy != 'csa' or arch == 'vanilla'
+        assert attn_strategy in ['naclip', 'nonly', 'kk', 'csa', 'vanilla', 'itaclip',
+                                 'qq', 'vv', 'maskclip']
         assert gaussian_std > 0 or attn_strategy not in ['naclip', 'nonly']
         self.arch, self.attn_strategy, self.gaussian_std = arch, attn_strategy, gaussian_std
+        self._itaclip_base_layers = (7, 8, 10)  # ITACLIP's own choice, base=12 layers (ViT-B/16)
+        self._itaclip_base_depth = 12
 
     def forward(self, x: torch.Tensor, output_layers=(-1,), out_type="mean", return_vanilla_cls=False, weights=None):
         B, nc, w, h = x.shape
@@ -256,18 +263,37 @@ class VisionTransformer(nn.Module):
         output_layers = tuple(num_layers + idx if idx < 0 else idx for idx in output_layers)
         last_layer_idx = max(output_layers)
 
-        out_features = [] 
+        if self.attn_strategy == 'itaclip':
+            scale = num_layers / self._itaclip_base_depth
+            itaclip_layers = {round(v * scale) for v in self._itaclip_base_layers}
+            itaclip_attn_list = []
+
+        out_features = []
         for idx, blk in enumerate(self.transformer.resblocks[:last_layer_idx+1]):
             blk = self.transformer.resblocks[idx]
             if idx != last_layer_idx:
+                if self.attn_strategy == 'itaclip' and (idx + 1) in itaclip_layers:
+                    # capture this layer's SCLIP-style (csa) attention for the
+                    # last-layer blend -- doesn't touch x's own forward path
+                    itaclip_attn_list.append(
+                        self.custom_attn('csa', blk.attn, blk.ln_1(x), n_patches, return_attn=True))
                 # we always use the vanilla attention for the intermediate layers beacuse in one experiment if we feed any other attention the performance of the next layers drops
                 reduced = self.custom_attn("vanilla", blk.attn, blk.ln_1(x), n_patches) ## for the purpose of evaluation we can compute 2 types, one for feedforward and one for the evaluation
                 x = x + reduced
                 x = x + blk.mlp(blk.ln_2(x))
 
-            else: 
+            else:
                 # Note that the att_strategy only will be applied to the last layer not intermediate layers
-                reduced = self.custom_attn(self.attn_strategy, blk.attn, blk.ln_1(x), n_patches)
+                if self.attn_strategy == 'itaclip':
+                    last_attn = self.custom_attn('csa', blk.attn, blk.ln_1(x), n_patches, return_attn=True)
+                    if itaclip_attn_list:
+                        avg_attn = torch.mean(torch.stack(itaclip_attn_list), dim=0)
+                        blended_attn = 0.5 * last_attn + 0.5 * avg_attn
+                    else:
+                        blended_attn = last_attn
+                    reduced = self.apply_saved_attn(blk.attn, blk.ln_1(x), blended_attn)
+                else:
+                    reduced = self.custom_attn(self.attn_strategy, blk.attn, blk.ln_1(x), n_patches)
                 final_x = x + reduced
                 final_x = final_x + blk.mlp(blk.ln_2(final_x))
                 if self.attn_strategy != 'vanilla' and return_vanilla_cls:
@@ -373,7 +399,7 @@ class VisionTransformer(nn.Module):
                 attn_weights = torch.bmm(k, k.transpose(1, 2)) * scale
                 omega = addition
             elif attn_strategy == 'nonly':
-                attn_weights = torch.zeros((num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
+                attn_weights = torch.zeros((bsz * num_heads, num_tokens, num_tokens)).to(x.dtype).to(x.device)
                 omega = addition * (scale * torch.einsum('hop,hPO->hpP', q.norm(dim=2).unsqueeze(1),
                                                          k.norm(dim=2).unsqueeze(2)).mean().item())
             else:
@@ -392,6 +418,25 @@ class VisionTransformer(nn.Module):
         elif attn_strategy == 'kk':
             attn_weights = torch.bmm(k * scale, k.transpose(1, 2))
             attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'qq':
+            # ClearCLIP (ECCV'24, arxiv 2411.12044... see model docstring): pure
+            # query-query self-similarity attention (single softmax, unlike csa's
+            # q-q + k-k sum). Paired with arch='reduced' -- ClearCLIP also drops
+            # the last layer's MLP and both residual connections, which arch=
+            # 'reduced' already does (returns bare `reduced`, not final_x).
+            attn_weights = torch.bmm(q * scale, q.transpose(1, 2))
+            attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'vv':
+            # value-value self-similarity -- natural third member of the
+            # qq/kk/vv attention-surgery family, not a named published method.
+            attn_weights = torch.bmm(v * scale, v.transpose(1, 2))
+            attn_weights = F.softmax(attn_weights, dim=-1)
+        elif attn_strategy == 'maskclip':
+            # MaskCLIP (ECCV'22, arxiv 2112.01071): discard q/k entirely, turn
+            # the value projection + out_proj into a per-token 1x1 conv --
+            # i.e. identity attention, no cross-token mixing at all.
+            attn_weights = torch.eye(num_tokens, dtype=x.dtype, device=x.device).unsqueeze(0).expand(
+                bsz * num_heads, -1, -1)
         else:
             raise NotImplemented(f'attn_strategy {self.attn_strategy} is not implemented')
 
@@ -405,6 +450,22 @@ class VisionTransformer(nn.Module):
         if with_attn:
             return attn_output, attn_weights
 
+        return attn_output
+
+    def apply_saved_attn(self, attn_layer, x, attn_weights):
+        """Apply an externally-computed attn_weights matrix (e.g. the itaclip
+        middle-layer/last-layer blend) instead of computing q/k attention from
+        x -- only the V projection + out_proj are still derived from x."""
+        num_heads = attn_layer.num_heads
+        num_tokens, bsz, embed_dim = x.size()
+        head_dim = embed_dim // num_heads
+
+        v = F.linear(x, attn_layer.in_proj_weight, attn_layer.in_proj_bias).chunk(3, dim=-1)[2]
+        v = v.contiguous().view(-1, bsz * num_heads, head_dim).transpose(0, 1)
+
+        attn_output = torch.bmm(attn_weights, v)
+        attn_output = attn_output.transpose(0, 1).contiguous().view(-1, bsz, embed_dim)
+        attn_output = attn_layer.out_proj(attn_output)
         return attn_output
 
     def interpolate_pos_encoding(self, x, w, h):

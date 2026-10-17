@@ -31,6 +31,8 @@ class TENTContinual:
     """
 
     def __init__(self, ovss_type, ovss_backbone, lr, classes, steps=1,
+                 catseg_checkpoint=None,
+                 maft_checkpoint=None,
                  prompt_dir=None, runtime_calculation=False, device='cpu'):
         """
         Args:
@@ -55,7 +57,9 @@ class TENTContinual:
         self.classes = classes
 
         # ---------- OVSS model ----------
-        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device)
+        self.model, self.tokenize = load_ovss(ovss_type, ovss_backbone, device=device,
+                                              classes=self.classes, catseg_checkpoint=catseg_checkpoint,
+                                              maft_checkpoint=maft_checkpoint)
 
         # ---------- Prompts ----------
         if prompt_dir:
@@ -139,6 +143,27 @@ class TENTContinual:
             self.model, self.optimizer, self.model_state, self.optimizer_state
         )
 
+    def state_dict(self):
+        """Adapt-state checkpoint for mid-stream resume: every tensor
+        currently registered in the optimizer (covers whatever this method
+        trains) plus optimizer state."""
+        opt_params = [p for g in self.optimizer.param_groups for p in g['params']]
+        return {
+            'params': [p.detach().cpu().clone() for p in opt_params],
+            'optimizer': self.optimizer.state_dict(),
+        }
+
+    def load_state_dict(self, sd):
+        opt_params = [p for g in self.optimizer.param_groups for p in g['params']]
+        with torch.no_grad():
+            for p, saved in zip(opt_params, sd['params']):
+                p.data.copy_(saved.to(device=p.device, dtype=p.dtype))
+        self.optimizer.load_state_dict(sd['optimizer'])
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.device)
+
     # ===========================================================
     # Adaptation
     # ===========================================================
@@ -207,3 +232,17 @@ class TENTContinual:
     @staticmethod
     def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
         return -(x.softmax(-3) * x.log_softmax(-3)).sum(-3)
+
+    # ===========================================================
+    # Checkpoint support (main_continual.py's save_checkpoint/load_checkpoint
+    # no-ops without these -- added so a long continual run's mid-stream
+    # state, e.g. for a qualitative collapse figure, survives without
+    # waiting for the whole 150-round script to exit cleanly)
+    # ===========================================================
+
+    def state_dict(self):
+        return {'model': self.model.state_dict(), 'optimizer': self.optimizer.state_dict()}
+
+    def load_state_dict(self, state):
+        self.model.load_state_dict(state['model'], strict=True)
+        self.optimizer.load_state_dict(state['optimizer'])

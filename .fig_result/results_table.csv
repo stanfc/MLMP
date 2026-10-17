@@ -1,0 +1,121 @@
+dataset,method,last_round,R150_mIoU,last_round_mIoU,peak_mIoU,peak_round,status
+ACDC,CAGA,150,30.95,30.95,31.55,43,complete
+ACDC,DAF,150,16.55,16.55,29.73,4,complete
+ACDC,TENT,150,7.90,7.90,32.90,19,complete
+ACDC,SAR,150,25.67,25.67,27.32,62,complete
+ACDC,SPA,150,19.20,19.20,24.91,13,complete
+ACDC,TRIBE,150,23.29,23.29,24.05,50,complete
+ACDC,DeYO,150,9.52,9.52,32.11,30,complete
+ACDC,ViDA,150,4.03,4.03,27.98,6,complete
+ACDC,PTTA,150,22.27,22.27,23.38,1,complete
+ACDC,COME,150,1.51,1.51,30.58,28,complete
+ACDC,MGP,150,6.12,6.12,34.04,49,complete
+ACDC,[abl] CAGA-gradgate,150,31.92,31.92,32.00,123,complete
+ACDC,[abl] CAGA-scale6,150,31.80,31.80,31.97,84,complete
+Cityscapes,CAGA,150,24.22,24.22,24.31,74,complete
+Cityscapes,DAF,150,1.97,1.97,22.94,1,complete
+Cityscapes,TENT,150,1.22,1.22,21.94,1,complete
+Cityscapes,SAR,150,22.69,22.69,22.69,106,complete
+Cityscapes,SPA,150,10.11,10.11,22.12,3,complete
+Cityscapes,TRIBE,150,21.37,21.37,23.84,28,complete
+Cityscapes,DeYO,150,2.21,2.21,25.56,7,complete
+Cityscapes,ViDA,150,0.01,0.01,3.73,1,complete
+Cityscapes,PTTA,150,20.22,20.22,21.45,1,complete
+Cityscapes,COME,150,1.18,1.18,21.62,1,complete
+Cityscapes,MGP,150,2.00,2.00,25.14,8,complete
+Cityscapes,[abl] CAGA-gradgate,150,21.29,21.29,24.46,7,complete
+Cityscapes,[abl] CAGA-scale6,150,24.38,24.38,24.39,8,complete
+V20,CAGA,150,73.48,73.48,73.79,13,complete
+V20,DAF,150,40.56,40.56,70.80,2,complete
+V20,TENT,150,0.25,0.25,67.53,1,complete
+V20,SAR,150,62.39,62.39,68.45,59,complete
+V20,SPA,150,79.15,79.15,79.15,149,complete
+V20,TRIBE,150,71.72,71.72,73.99,34,complete
+V20,DeYO,150,68.85,68.85,72.12,12,complete
+V20,ViDA,150,0.25,0.25,36.61,1,complete
+V20,PTTA,150,10.35,10.35,67.17,1,complete
+V20,COME,150,0.26,0.26,67.66,1,complete
+V20,MGP,150,66.62,66.62,76.35,27,complete
+V20,[abl] CAGA-gradgate,150,72.33,72.33,73.79,14,complete
+V20,[abl] CAGA-scale6,150,71.36,71.36,73.78,10,complete
+V21,CAGA,150,50.01,50.01,50.04,77,complete
+V21,DAF,150,33.54,33.54,46.25,7,complete
+V21,TENT,150,0.10,0.10,41.30,5,complete
+V21,SAR,150,40.79,40.79,42.22,99,complete
+V21,SPA,150,41.57,41.57,41.58,148,complete
+V21,TRIBE,150,40.29,40.29,40.29,150,complete
+V21,DeYO,150,53.08,53.08,53.09,139,complete
+V21,ViDA,150,0.34,0.34,39.67,1,complete
+V21,PTTA,150,19.98,19.98,40.49,1,complete
+V21,COME,150,37.60,37.60,42.25,5,complete
+V21,MGP,150,52.91,52.91,52.91,150,complete
+V21,[abl] CAGA-gradgate,150,50.69,50.69,50.72,124,complete
+V21,[abl] CAGA-scale6,150,50.57,50.57,50.60,126,complete
+P59,CAGA,150,26.92,26.92,26.97,147,complete
+P59,DAF,150,16.64,16.64,25.80,9,complete
+P59,TENT,150,0.01,0.01,23.41,4,complete
+P59,SAR,150,25.11,25.11,26.07,12,complete
+P59,SPA,150,25.45,25.45,25.45,150,complete
+P59,TRIBE,150,22.70,22.70,22.70,149,complete
+P59,DeYO,150,29.11,29.11,29.12,149,complete
+P59,ViDA,150,0.05,0.05,12.68,1,complete
+P59,PTTA,150,2.98,2.98,22.10,1,complete
+P59,COME,150,0.01,0.01,24.01,6,complete
+P59,MGP,150,22.37,22.37,27.44,46,complete
+P59,[abl] CAGA-gradgate,150,27.01,27.01,27.05,144,complete
+P59,[abl] CAGA-scale6,150,27.49,27.49,27.49,109,complete
+P60,CAGA,150,24.57,24.57,24.64,110,complete
+P60,DAF,150,15.16,15.16,23.70,11,complete
+P60,TENT,150,0.01,0.01,21.93,5,complete
+P60,SAR,150,22.44,22.44,24.18,77,complete
+P60,SPA,150,23.04,23.04,23.04,150,complete
+P60,TRIBE,150,20.62,20.62,20.62,149,complete
+P60,DeYO,150,26.07,26.07,26.07,150,complete
+P60,ViDA,150,0.01,0.01,12.15,1,complete
+P60,PTTA,150,1.75,1.75,20.61,1,complete
+P60,COME,150,0.01,0.01,22.48,7,complete
+P60,MGP,150,20.93,20.93,24.93,42,complete
+P60,[abl] CAGA-gradgate,150,24.91,24.91,24.93,133,complete
+P60,[abl] CAGA-scale6,150,24.94,24.94,24.97,65,complete
+COCO-Stuff,CAGA,150,13.30,13.30,13.54,23,complete
+COCO-Stuff,DAF,150,7.89,7.89,13.11,3,complete
+COCO-Stuff,TENT,150,0.04,0.04,12.96,7,complete
+COCO-Stuff,SAR,150,12.61,12.61,12.87,88,complete
+COCO-Stuff,SPA,150,13.24,13.24,13.26,148,complete
+COCO-Stuff,TRIBE,150,11.33,11.33,11.33,150,complete
+COCO-Stuff,DeYO,150,10.22,10.22,13.03,14,complete
+COCO-Stuff,ViDA,150,0.00,0.00,7.18,1,complete
+COCO-Stuff,PTTA,150,9.20,9.20,11.81,1,complete
+COCO-Stuff,COME,150,0.00,0.00,12.83,6,complete
+COCO-Stuff,MGP,150,0.36,0.36,13.48,26,complete
+COCO-Stuff,[abl] CAGA-gradgate,150,13.36,13.36,13.54,24,complete
+COCO-Stuff,[abl] CAGA-scale6,150,13.25,13.25,13.59,16,complete
+COCO-Object,CAGA,150,21.73,21.73,21.75,120,complete
+COCO-Object,DAF,150,10.18,10.18,20.40,1,complete
+COCO-Object,TENT,150,1.35,1.35,22.45,18,complete
+COCO-Object,SAR,150,20.02,20.02,23.05,131,complete
+COCO-Object,SPA,150,19.86,19.86,19.86,150,complete
+COCO-Object,TRIBE,150,17.95,17.95,17.95,150,complete
+COCO-Object,DeYO,150,22.13,22.13,22.15,148,complete
+COCO-Object,ViDA,150,0.07,0.07,11.13,1,complete
+COCO-Object,PTTA,150,15.55,15.55,17.55,1,complete
+COCO-Object,COME,150,0.02,0.02,20.15,9,complete
+COCO-Object,MGP,150,20.03,20.03,21.67,61,complete
+COCO-Object,[abl] CAGA-gradgate,150,22.01,22.01,22.01,139,complete
+COCO-Object,[abl] CAGA-scale6,150,21.95,21.95,22.02,49,complete
+ACDC,No-Adapt,1,,23.34,,,reference
+ACDC,MLMP-episodic,,,29.84,,,"episodic mean over conditions, no trajectory"
+Cityscapes,No-Adapt,1,,22.67,,,reference
+Cityscapes,MLMP-episodic,,,23.40,,,"episodic mean over conditions, no trajectory"
+V20,No-Adapt,1,,68.51,,,reference
+V20,MLMP-episodic,,,74.09,,,"episodic mean over conditions, no trajectory"
+V21,No-Adapt,1,,42.17,,,reference
+V21,MLMP-episodic,,,45.44,,,"episodic mean over conditions, no trajectory"
+P59,No-Adapt,1,,24.14,,,reference
+P59,MLMP-episodic,,,24.78,,,"episodic mean over conditions, no trajectory"
+P60,No-Adapt,1,,22.44,,,reference
+P60,MLMP-episodic,,,23.02,,,"episodic mean over conditions, no trajectory"
+COCO-Stuff,No-Adapt,1,,12.50,,,reference
+COCO-Stuff,MLMP-episodic,,,12.70,,,"episodic mean over conditions, no trajectory"
+COCO-Object,No-Adapt,1,,18.71,,,reference
+COCO-Object,MLMP-episodic,,,21.00,,,"episodic mean over conditions, no trajectory"

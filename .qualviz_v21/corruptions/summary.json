@@ -1,0 +1,122 @@
+[
+  {
+    "corruption": "gaussian_noise",
+    "acc_src": 0.7611065064235392,
+    "acc_ck": 0.0,
+    "conf_src": 0.47561827301979065,
+    "conf_ck": 0.9716327786445618,
+    "path": ".qualviz_v21/corruptions/gaussian_noise_quad.png"
+  },
+  {
+    "corruption": "shot_noise",
+    "acc_src": 0.5242229589722337,
+    "acc_ck": 0.0,
+    "conf_src": 0.6223551034927368,
+    "conf_ck": 0.9529721736907959,
+    "path": ".qualviz_v21/corruptions/shot_noise_quad.png"
+  },
+  {
+    "corruption": "impulse_noise",
+    "acc_src": 0.6888520513883133,
+    "acc_ck": 0.0,
+    "conf_src": 0.45707908272743225,
+    "conf_ck": 0.9754447937011719,
+    "path": ".qualviz_v21/corruptions/impulse_noise_quad.png"
+  },
+  {
+    "corruption": "defocus_blur",
+    "acc_src": 0.0915665147119768,
+    "acc_ck": 0.0,
+    "conf_src": 0.9141300320625305,
+    "conf_ck": 0.9741861820220947,
+    "path": ".qualviz_v21/corruptions/defocus_blur_quad.png"
+  },
+  {
+    "corruption": "glass_blur",
+    "acc_src": 0.33688354745130544,
+    "acc_ck": 0.0,
+    "conf_src": 0.7005355358123779,
+    "conf_ck": 0.9763457179069519,
+    "path": ".qualviz_v21/corruptions/glass_blur_quad.png"
+  },
+  {
+    "corruption": "motion_blur",
+    "acc_src": 0.40381268130957315,
+    "acc_ck": 0.0,
+    "conf_src": 0.8353015780448914,
+    "conf_ck": 0.9708510041236877,
+    "path": ".qualviz_v21/corruptions/motion_blur_quad.png"
+  },
+  {
+    "corruption": "zoom_blur",
+    "acc_src": 0.3202652300041442,
+    "acc_ck": 0.0015540820555325322,
+    "conf_src": 0.6917191743850708,
+    "conf_ck": 0.9610270261764526,
+    "path": ".qualviz_v21/corruptions/zoom_blur_quad.png"
+  },
+  {
+    "corruption": "snow",
+    "acc_src": 0.28414836303356816,
+    "acc_ck": 0.0,
+    "conf_src": 0.6945724487304688,
+    "conf_ck": 0.9749481081962585,
+    "path": ".qualviz_v21/corruptions/snow_quad.png"
+  },
+  {
+    "corruption": "frost",
+    "acc_src": 0.5710940737670949,
+    "acc_ck": 0.0,
+    "conf_src": 0.5862208008766174,
+    "conf_ck": 0.9752128720283508,
+    "path": ".qualviz_v21/corruptions/frost_quad.png"
+  },
+  {
+    "corruption": "fog",
+    "acc_src": 0.3556568586821384,
+    "acc_ck": 0.0,
+    "conf_src": 0.8054247498512268,
+    "conf_ck": 0.9760953783988953,
+    "path": ".qualviz_v21/corruptions/fog_quad.png"
+  },
+  {
+    "corruption": "brightness",
+    "acc_src": 0.33775383340240367,
+    "acc_ck": 0.0,
+    "conf_src": 0.8093897104263306,
+    "conf_ck": 0.9677427411079407,
+    "path": ".qualviz_v21/corruptions/brightness_quad.png"
+  },
+  {
+    "corruption": "contrast",
+    "acc_src": 0.4705967675093245,
+    "acc_ck": 0.0,
+    "conf_src": 0.6950035095214844,
+    "conf_ck": 0.9600751399993896,
+    "path": ".qualviz_v21/corruptions/contrast_quad.png"
+  },
+  {
+    "corruption": "elastic_transform",
+    "acc_src": 0.5832987981765437,
+    "acc_ck": 0.0,
+    "conf_src": 0.5858375430107117,
+    "conf_ck": 0.9619854092597961,
+    "path": ".qualviz_v21/corruptions/elastic_transform_quad.png"
+  },
+  {
+    "corruption": "pixelate",
+    "acc_src": 0.5925611272275176,
+    "acc_ck": 0.0,
+    "conf_src": 0.7420097589492798,
+    "conf_ck": 0.9695985317230225,
+    "path": ".qualviz_v21/corruptions/pixelate_quad.png"
+  },
+  {
+    "corruption": "jpeg_compression",
+    "acc_src": 0.3000621632822213,
+    "acc_ck": 0.0,
+    "conf_src": 0.7612916231155396,
+    "conf_ck": 0.9704007506370544,
+    "path": ".qualviz_v21/corruptions/jpeg_compression_quad.png"
+  }
+]

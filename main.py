@@ -145,6 +145,12 @@ def argparser():
         default='ViT-B/32',
         help='CLIP vision backbone (e.g., ViT-B/32, ViT-L/14)'
     )
+    parser.add_argument('--catseg_checkpoint', type=str, default=None,
+                        help='Path to a CAT-Seg pretrained checkpoint '
+                             '(only used when --ovss_type catseg)')
+    parser.add_argument('--maft_checkpoint', type=str, default=None,
+                        help='Path to a MAFT+ pretrained checkpoint '
+                             '(only used when --ovss_type maft)')
     parser.add_argument(
         '--class_extensions',
         action='store_true',

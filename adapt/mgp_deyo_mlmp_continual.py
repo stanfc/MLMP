@@ -217,6 +217,25 @@ class MGPDeYOMLMPContinual:
         self.collect_diag = False
         self.diag = {}
 
+    # --- checkpoint support (added for qualitative-figure runs; no effect on adaptation) ---
+    def state_dict(self):
+        return {'params': [p.detach().cpu().clone() for _, p in self.named_ln_params],
+                'optimizer': self.optimizer.state_dict(),
+                'mgp_buffers': self.mgp.buffers, 'mgp_bases': self.mgp.bases,
+                'mgp_dir_ema': self.mgp_dir_ema, 'total_batches': self.total_batches}
+
+    def load_state_dict(self, sd):
+        with torch.no_grad():
+            for (_, p), saved in zip(self.named_ln_params, sd['params']):
+                p.data.copy_(saved.to(device=p.device, dtype=p.dtype))
+        self.optimizer.load_state_dict(sd['optimizer'])
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(self.device)
+        self.mgp.buffers, self.mgp.bases = sd['mgp_buffers'], sd['mgp_bases']
+        self.mgp_dir_ema = sd['mgp_dir_ema']; self.total_batches = sd['total_batches']
+
     def adapt(self, x):
         return self.perform_adaptation(x)
 

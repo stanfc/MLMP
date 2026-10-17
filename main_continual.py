@@ -1,6 +1,7 @@
 # Standard
 import os
 import time
+import random
 import argparse
 
 # Third-party
@@ -101,6 +102,12 @@ def argparser():
         )
     )
     parser.add_argument(
+        '--shuffle_domain_order', action='store_true',
+        help=('Analysis: randomly permute the ORDER of the domain blocks within every '
+              'round (block contents/order inside a domain unchanged). The permutation is a '
+              'pure function of (--seed, round), so runs are reproducible and resume-safe. '
+              'Default off = fixed order, identical to the original behavior.'))
+    parser.add_argument(
         '--corruptions_list2', nargs='+', type=str, default=None,
         help=(
             'Optional second-phase corruption list. If set together with '
@@ -170,6 +177,9 @@ def argparser():
     parser.add_argument('--catseg_checkpoint', type=str, default=None,
                         help='Path to a CAT-Seg pretrained checkpoint '
                              '(only used when --ovss_type catseg)')
+    parser.add_argument('--maft_checkpoint', type=str, default=None,
+                        help='Path to a MAFT+ pretrained checkpoint '
+                             '(only used when --ovss_type maft)')
 
     # ----------------------------------------
     # Adaptation
@@ -277,6 +287,23 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
         parser.add_argument('--prompt_integration', type=str, default='loss')
         parser.add_argument('--alpha_cls', type=float, default=1.0)
+
+    # --- DAF (Diversify, Anchor, Filter) on top of MLMP-continual ---
+    # Ported from https://github.com/chandlerbing65nm/DAF (fork of our own
+    # upstream dosowiechi/MLMP). Defaults match the DAF README's example.
+    elif method == 'daf_mlmp_continual':
+        parser.add_argument('--vision_outputs', nargs='+', type=int, default=(-1,))
+        parser.add_argument('--prompt_integration', type=str, default='loss')
+        parser.add_argument('--alpha_cls', type=float, default=1.0)
+        parser.add_argument('--lamb_ent', type=float, default=1.0)
+        parser.add_argument('--lamb_div', type=float, default=2.0,
+                            help='Diversify: marginal-class-entropy loss weight')
+        parser.add_argument('--lamb_cmac', type=float, default=0.5,
+                            help='Anchor: cross-modal anchor consistency loss weight')
+        parser.add_argument('--alpha_safs', type=float, default=0.5,
+                            help='Filter: batch std multiplier for the per-sample keep threshold')
+        parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'],
+                            help="DAF's own README uses sgd; 'adam' kept only for the earlier sub100 runs")
 
     # --- LCoTTA + MLMP: MLMP loss + subspace-projected gradient update ---
     elif method == 'lcotta_mlmp_continual':
@@ -397,6 +424,12 @@ def add_method_specific_args(parser, method):
     # --- TENT-Continual ---
     elif method == 'tent_continual':
         pass   # no extra args beyond base parser
+
+    # --- RDumb (TENT + fixed-interval full reset) ---
+    elif method == 'rdumb_continual':
+        parser.add_argument('--reset_interval', type=int, default=1000,
+                            help='RDumb: reset model+optimizer to source every N adaptation '
+                                 'calls (images at batch_size 1). Paper default 1000.')
 
     # --- SAR (Sharpness-Aware Reliable TTA, ICLR 2023) ---
     elif method == 'sar_continual':
@@ -711,6 +744,12 @@ def add_method_specific_args(parser, method):
     # evicted); + AdaGate/prompt-weight/text-residual/marginal-diversity-loss variants ---
     elif method in ('deyo_mlmp_hmgate2_continual', 'deyo_mlmp_promptw_hmgate2_continual',
                     'deyo_mlmp_textres_hmgate2_continual', 'deyo_mlmp_adagate_continual',
+                    'deyo_mlmp_adagate_hgate_continual',
+                    'deyo_mlmp_adagate_hgate_alwaysrestore_continual',
+                    'deyo_mlmp_adagate_hgate_randomrestore_continual',
+                    'deyo_mlmp_adagate_hgate_randomsource_continual',
+                    'deyo_mlmp_adagate_gradnormonly_continual',
+                    'deyo_mlmp_adagate_hmarginonly_continual',
                     'deyo_mlmp_hmgate2_divloss_continual',
                     'deyo_mlmp_hmgate2_emaeval_continual', 'deyo_mlmp_hmgate2_textalign_continual',
                     'deyo_mlmp_hmgate2_logitadj_continual', 'deyo_mlmp_hmgate2_ratchet_continual',
@@ -743,7 +782,12 @@ def add_method_specific_args(parser, method):
         parser.add_argument('--ln_ckpt_every', type=int, default=0,
                             help='dump a LN-weight snapshot every N gate windows '
                                  '(for offline collapse-trajectory analysis); 0=off')
-        if method == 'deyo_mlmp_adagate_continual':
+        if method in ('deyo_mlmp_adagate_continual', 'deyo_mlmp_adagate_hgate_continual',
+                      'deyo_mlmp_adagate_hgate_alwaysrestore_continual',
+                      'deyo_mlmp_adagate_hgate_randomrestore_continual',
+                      'deyo_mlmp_adagate_hgate_randomsource_continual',
+                      'deyo_mlmp_adagate_gradnormonly_continual',
+                      'deyo_mlmp_adagate_hmarginonly_continual'):
             # self-calibrating trigger (A) and lag (B); see the module docstring for
             # why the absolute slope_deadzone / lag_gain are inert in hmgate2.
             parser.add_argument('--trend_stat', type=str, default='mad',
@@ -780,6 +824,46 @@ def add_method_specific_args(parser, method):
                                      "bottomed out early. 'growing_hmargin' = distance measured "
                                      "since H_margin's own peak instead of grad_norm's minimum. "
                                      "'growing_hmargin_scaled' combines both.")
+            parser.add_argument('--h_max_mode', type=str, default='lifetime',
+                                choices=['lifetime', 'decaying'],
+                                help="'lifetime' = h_max never decreases (original, validated "
+                                     "on ACDC/V20-5corr/Cityscapes-5corr). 'decaying' = h_max = "
+                                     "max(h_margin, h_max_decay*h_max) -- forgets old peaks so "
+                                     "a ceiling set during an easy stretch relaxes as the stream "
+                                     "moves to something harder; needed once the corruption mix "
+                                     "spans a wide difficulty range.")
+            parser.add_argument('--h_max_decay', type=float, default=0.98)
+
+        if method in ('deyo_mlmp_adagate_hgate_continual',
+                      'deyo_mlmp_adagate_hgate_alwaysrestore_continual',
+                      'deyo_mlmp_adagate_hgate_randomrestore_continual',
+                      'deyo_mlmp_adagate_hgate_randomsource_continual'):
+            parser.add_argument('--anchor_h_min_ratio', type=float, default=0.95,
+                                help="CAGA-hgate only: a new grad_norm minimum is only "
+                                     "accepted as the permanent restore anchor if this "
+                                     "window's h_margin >= anchor_h_min_ratio * running-max "
+                                     "H. Rejects anchor candidates found while entropy is "
+                                     "already degraded (plain CAGA pins on grad_norm alone).")
+
+        if method in ('deyo_mlmp_adagate_hgate_randomrestore_continual',
+                      'deyo_mlmp_adagate_hgate_randomsource_continual'):
+            parser.add_argument('--fire_prob', type=float, default=0.296,
+                                help="ABLATION: restore trigger is an independent coin flip "
+                                     "with this probability per monitor window (default = "
+                                     "locked CAGA's empirically measured firing rate on ACDC, "
+                                     "361/1218 windows), instead of the grad-norm-trend gate.")
+            parser.add_argument('--random_seed', type=int, default=0,
+                                help='seed for the ablation coin-flip RNG (separate from --seed).')
+
+        if method == 'deyo_mlmp_adagate_gradnormonly_continual':
+            parser.add_argument('--grad_severity_cap', type=float, default=3.0,
+                                help='ABLATION: restore intensity = base_rst * clamp(grad_norm '
+                                     '/ g_min, 1.0, this). h_margin unused anywhere in this gate.')
+
+        if method == 'deyo_mlmp_adagate_hmarginonly_continual':
+            parser.add_argument('--h_severity_cap', type=float, default=3.0,
+                                help='ABLATION: restore intensity = base_rst * clamp(h_margin '
+                                     'severity, 1.0, this). grad_norm unused anywhere in this gate.')
 
         if method == 'deyo_mlmp_promptw_hmgate2_continual':
             # entropy-weighted prompt aggregation (prompt/text-template axis)
@@ -894,6 +978,71 @@ def add_method_specific_args(parser, method):
                             help='Uncertainty weight in CSTU score (default 1.0)')
         parser.add_argument('--update_frequency', type=int, default=None,
                             help='Update every N instances (default = memory_size)')
+
+    elif method == 'vida_continual':
+        parser.add_argument('--r', type=int, default=4,
+                            help='low-rank (domain-shared) adapter rank (default 4)')
+        parser.add_argument('--r2', type=int, default=16,
+                            help='high-rank (domain-specific) adapter rank (default 16)')
+        parser.add_argument('--ema', type=float, default=0.99,
+                            help='EMA teacher decay for non-adapter params (default 0.99, '
+                                 'matches vida/imagenet/vida.py -- inert in this port since '
+                                 'non-adapter params are frozen, kept for faithfulness)')
+        parser.add_argument('--ema_vida', type=float, default=0.8,
+                            help='EMA teacher decay for the injected adapter params (default 0.8, '
+                                 'matches the paper\'s actual tuned ViT-benchmark config '
+                                 'MT_ViDA -- vida/imagenet/cfgs/vit/vida.yaml -- not the class '
+                                 'file\'s own untuned placeholder default of 0.99)')
+        parser.add_argument('--unc_n', type=int, default=10,
+                            help='number of augmented teacher forward passes for the '
+                                 'homeostatic uncertainty estimate (default 10, paper value; '
+                                 'reduce if this is too slow for dense prediction)')
+        parser.add_argument('--unc_thr', type=float, default=0.2,
+                            help='uncertainty threshold switching high-rank vs low-rank '
+                                 'lean (default 0.2)')
+
+    elif method == 'spa_continual':
+        parser.add_argument('--noise_ratio', type=float, default=0.4,
+                            help='target mean squared alpha for the learnable patch '
+                                 'eraser (default 0.4, paper value)')
+        parser.add_argument('--freq_mask_ratio', type=float, default=0.2,
+                            help='fraction of low-frequency amplitude components zeroed '
+                                 'per step (default 0.2, paper value)')
+        parser.add_argument('--eraser_patch_size', type=int, default=14,
+                            help='patch-eraser grid cell size in pixels (default 14, '
+                                 'matches NA-CLIP ViT-L/14\'s own patch grid -- see '
+                                 'adapt/spa_continual.py docstring). Not to be confused '
+                                 'with the global --patch_size (sliding-window tile size).')
+
+    elif method == 'ptta_continual':
+        parser.add_argument('--e_margin', type=float, default=1.198,
+                            help='reliable-sample entropy margin (default 1.198, '
+                                 'this repo\'s eata_continual.py-tuned value for our '
+                                 'class count -- NOT the paper\'s ImageNet-scale default)')
+        parser.add_argument('--d_margin', type=float, default=0.05,
+                            help='non-redundant cosine margin (default 0.05, paper value)')
+        parser.add_argument('--loss2_weight', type=float, default=3.0,
+                            help='purification KL loss weight (default 3.0, paper value)')
+        parser.add_argument('--queue_size', type=int, default=1000,
+                            help='saliency memory bank size (default 1000, paper value)')
+        parser.add_argument('--neighbor', type=int, default=1,
+                            help='number of opposite bank entries averaged for Mixup '
+                                 '(default 1, paper value)')
+
+    elif method == 'tribe_continual':
+        parser.add_argument('--eta', type=float, default=0.005,
+                            help='BalancedNorm per-class running-stat momentum '
+                                 '(default 0.005, paper\'s TRIBE.ETA)')
+        parser.add_argument('--gamma', type=float, default=0.0,
+                            help='BalancedNorm local/global blend factor '
+                                 '(default 0.0, paper\'s TRIBE.GAMMA)')
+        parser.add_argument('--lam', type=float, default=0.5,
+                            help='source-anchor MSE regularization weight '
+                                 '(default 0.5, paper\'s TRIBE.LAMBDA)')
+        parser.add_argument('--h0', type=float, default=0.05,
+                            help='reliable-pixel entropy threshold multiplier, '
+                                 'margin = h0 * log(num_classes) (default 0.05, '
+                                 'paper\'s TRIBE.H0)')
 
     # --- CMA-Continual (Cross-Modal Alignment, proposed) ---
     elif method == 'cma_continual':
@@ -1322,8 +1471,13 @@ def main(args):
     # always equals `conditions`, identical to the original behavior.
     def active_conditions(round_num):
         if args.corruptions_list2 and args.phase1_rounds > 0 and round_num > args.phase1_rounds:
-            return args.corruptions_list2
-        return conditions
+            base = args.corruptions_list2
+        else:
+            base = conditions
+        if args.shuffle_domain_order:
+            base = list(base)
+            random.Random(args.seed * 100003 + round_num).shuffle(base)
+        return base
 
     # Union of every condition name that can appear, in first-seen order --
     # used only for the results-table header so both phases' columns show up
@@ -1454,6 +1608,29 @@ def main(args):
             corruption_severity=args.corruption_severity,
         )
         adapt_method.obtain_src_prototypes(src_loader)
+        del src_loader
+
+    # TRIBE-continual requires BalancedNorm's per-class statistics
+    # calibrated from source-proxy data before adaptation begins (see
+    # adapt/tribe_continual.py's obtain_src_bn_stats docstring: without
+    # this it starts from an uncalibrated mean=0/var=1 baseline instead of
+    # the original's own pretrained-BatchNorm-derived statistic).
+    if args.method == 'tribe_continual':
+        src_dataset    = args.src_dataset    or args.dataset
+        src_data_dir   = args.src_data_dir   or args.data_dir
+        src_corruption = args.src_corruption or conditions[0]
+
+        print(f"\n[TRIBE] Calibrating BalancedNorm from source proxy: "
+              f"dataset='{src_dataset}', corruption='{src_corruption}'")
+        src_loader, _ = segmentation_datasets.prepare_data(
+            src_dataset, src_data_dir, args.init_resize,
+            args.patch_size, args.patch_stride,
+            corruption=src_corruption,
+            batch_size=args.batch_size, num_workers=args.workers,
+            shuffle=False,
+            corruption_severity=args.corruption_severity,
+        )
+        adapt_method.obtain_src_bn_stats(src_loader)
         del src_loader
 
     all_round_results = (ckpt['all_round_results'] if ckpt is not None

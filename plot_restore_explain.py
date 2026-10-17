@@ -51,9 +51,8 @@ XMAX = 20
 r = np.arange(1, R + 1)
 ax.plot(r, miou, color="#1f77b4", lw=3.2, zorder=4)
 ax.set_xlim(0, XMAX); ax.set_ylim(0, 38)
-ax.set_xlabel("Round"); ax.set_ylabel("mIoU (%)")
+ax.tick_params(width=1.5, length=7, labelbottom=False, labelleft=False)
 ax.grid(alpha=0.28)
-ax.tick_params(width=1.5, length=7)
 
 y_cur = miou[int(round(cur_r)) - 1]
 y_anc = miou[max(0, int(round(anchor_r)) - 1)]

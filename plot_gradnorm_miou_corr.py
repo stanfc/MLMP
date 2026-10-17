@@ -9,7 +9,8 @@ from scipy.stats import pearsonr, spearmanr
 
 import sys
 RUN = sys.argv[1] if len(sys.argv) > 1 else "deyo_mlmp_hmgate2_continual"
-BASE = f"save/ACDCDataset/{RUN}"
+DATASET = sys.argv[2] if len(sys.argv) > 2 else "ACDCDataset"
+BASE = f"save/{DATASET}/{RUN}"
 
 # per-round mIoU
 miou = [float(l.split(",")[-1]) for l in open(f"{BASE}/results_all_rounds.txt")

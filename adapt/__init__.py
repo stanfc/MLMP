@@ -1,6 +1,7 @@
 import inspect
 from pprint import pprint
 
+from .rdumb_continual import RDumbContinual
 from .mlmp import MLMP
 from .clipartt import CLIPARTT
 from .watt import WATT
@@ -11,6 +12,7 @@ from .dpcore import DPCore
 
 # Continual TTA (no reset, state persists across stream)
 from .mlmp_continual import MLMPContinual
+from .daf_mlmp_continual import DAFMLMPContinual
 from .lcotta_mlmp_continual import LCoTTAMLMPContinual
 from .tent_continual import TENTContinual
 from .cma_continual import CMAContinual
@@ -28,6 +30,11 @@ from .tent_divgate_recent_anchor import TENTDivGateRecentAnchor
 from .tent_divgate_decoupled import TENTDivGateDecoupled
 from .tent_divgate_hybrid_anchor import TENTDivGateHybridAnchor
 from .tent_divgate_smooth_anchor import TENTDivGateSmoothAnchor
+from .vida_continual import ViDAContinual
+from .spa_continual import SPAContinual
+from .ptta_continual import PTTAContinual
+from .come_continual import COMEContinual
+from .tribe_continual import TRIBEContinual
 from .clipartt_siggate_continual import CLIPArTTSigGateContinual
 from .clipartt_continual import CLIPArTTContinual
 from .clipartt_divgate_continual import CLIPArTTDivGateContinual
@@ -73,6 +80,12 @@ from .deyo_mlmp_hmgate2_continual import DeYOMLMPHMGate2Continual
 from .deyo_mlmp_promptw_hmgate2_continual import DeYOMLMPPromptWHMGate2Continual
 from .deyo_mlmp_textres_hmgate2_continual import DeYOMLMPTextResHMGate2Continual
 from .deyo_mlmp_adagate_continual import DeYOMLMPAdaGateContinual
+from .deyo_mlmp_adagate_hgate_continual import DeYOMLMPAdaGateHGateContinual
+from .deyo_mlmp_adagate_hgate_alwaysrestore_continual import DeYOMLMPAdaGateHGateAlwaysRestoreContinual
+from .deyo_mlmp_adagate_hgate_randomrestore_continual import DeYOMLMPAdaGateHGateRandomRestoreContinual
+from .deyo_mlmp_adagate_hgate_randomsource_continual import DeYOMLMPAdaGateHGateRandomSourceContinual
+from .deyo_mlmp_adagate_gradnormonly_continual import DeYOMLMPAdaGateGradNormOnlyContinual
+from .deyo_mlmp_adagate_hmarginonly_continual import DeYOMLMPAdaGateHMarginOnlyContinual
 from .deyo_mlmp_hmgate2_emaeval_continual import DeYOMLMPHMGate2EmaEvalContinual
 from .deyo_mlmp_hmgate2_mseval_continual import DeYOMLMPHMGate2MSEvalContinual
 from .deyo_mlmp_hmgate2_distill_continual import DeYOMLMPHMGate2DistillContinual
@@ -101,8 +114,10 @@ METHOD_CLASSES = {
     'dpcore': DPCore,
     # Continual TTA (naive: no reset)
     'mlmp_continual': MLMPContinual,
+    'daf_mlmp_continual': DAFMLMPContinual,
     'lcotta_mlmp_continual': LCoTTAMLMPContinual,
     'tent_continual': TENTContinual,
+    'rdumb_continual': RDumbContinual,
     # Continual TTA with cross-modal alignment loss (proposed Direction 1)
     'cma_continual': CMAContinual,
     # Continual TTA with CMA + source/target prototype memory bank (proposed D1+D2)
@@ -177,6 +192,27 @@ METHOD_CLASSES = {
     # RoTTA (Robust TTA in Dynamic Scenarios, CVPR 2023): CSTU
     # category-balanced memory bank + EMA teacher-student + timeliness
     'rotta_continual': RoTTAContinual,
+    # ViDA (ICLR 2024): injected LoRA adapters (low+high rank) on CLIP's
+    # attn.out_proj/mlp.c_proj, homeostatic scale-switch by EMA-teacher
+    # prediction variance. NOT LayerNorm-only -- see adapt/vida_continual.py.
+    'vida_continual': ViDAContinual,
+    # SPA (ICML 2025): BYOL-style predictor head trained via self-distillation
+    # against two geometry-preserving augmentations (low-freq FFT amplitude
+    # mask + learnable adversarial patch erasing). LayerNorm + predictor.
+    'spa_continual': SPAContinual,
+    # PTTA (ICML 2025): EATA-style reliable+non-redundant filtering, plus a
+    # memory bank of past good samples Mixup'd against the current sample's
+    # most-opposite (by entropy-gradient saliency) bank entry.
+    'ptta_continual': PTTAContinual,
+    # COME (ICLR 2025): TENT-continual with softmax entropy replaced by a
+    # Dirichlet/subjective-logic "entropy of opinion" that keeps an explicit
+    # uncertainty-mass floor -- a drop-in loss refinement, not a new loop.
+    'come_continual': COMEContinual,
+    # TRIBE (AAAI 2024): faithful port despite a real architecture mismatch
+    # (Balanced BatchNorm has no LayerNorm equivalent) -- per-token pseudo-
+    # labeled "Balanced Norm" bolted onto the final image embedding, plus
+    # a shared-weight Tri-Net self-training loop. See adapt/tribe_continual.py.
+    'tribe_continual': TRIBEContinual,
     # DeYO adapt loss + MLMP multi-LAYER adaptation + UAML eval (single prompt)
     'deyo_uaml_continual': DeYOUAMLContinual,
     # DeYO adapt loss + MLMP multi-prompt + multi-layer + UAML eval (full)
@@ -215,6 +251,12 @@ METHOD_CLASSES = {
     'deyo_mlmp_textres_hmgate2_continual': DeYOMLMPTextResHMGate2Continual,
     # GDG-PA with self-calibrating trigger (normalised trend) + lag (budget fraction)
     'deyo_mlmp_adagate_continual': DeYOMLMPAdaGateContinual,
+    'deyo_mlmp_adagate_hgate_continual': DeYOMLMPAdaGateHGateContinual,
+    'deyo_mlmp_adagate_hgate_alwaysrestore_continual': DeYOMLMPAdaGateHGateAlwaysRestoreContinual,
+    'deyo_mlmp_adagate_hgate_randomrestore_continual': DeYOMLMPAdaGateHGateRandomRestoreContinual,
+    'deyo_mlmp_adagate_hgate_randomsource_continual': DeYOMLMPAdaGateHGateRandomSourceContinual,
+    'deyo_mlmp_adagate_gradnormonly_continual': DeYOMLMPAdaGateGradNormOnlyContinual,
+    'deyo_mlmp_adagate_hmarginonly_continual': DeYOMLMPAdaGateHMarginOnlyContinual,
     'deyo_mlmp_hmgate2_emaeval_continual': DeYOMLMPHMGate2EmaEvalContinual,
     'deyo_mlmp_hmgate2_mseval_continual': DeYOMLMPHMGate2MSEvalContinual,
     'deyo_mlmp_hmgate2_distill_continual': DeYOMLMPHMGate2DistillContinual,

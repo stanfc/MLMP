@@ -1,0 +1,182 @@
+% =====================================================================
+% Section 3 -- Analysis
+% Self-contained draft. Notation is defined from scratch; no dependency
+% on any other note file. Citation keys reused from the existing
+% Related Work section (niu2023sar, doloriel2026daf, xiong2026mgp,
+% wang2022cotta, noori2025mlmp) -- add these entries to the .bib if not
+% already present.
+% =====================================================================
+
+\section{Analysis} \label{analysis}
+
+We analyze why continual adaptation collapses under long horizons, and use this
+analysis to justify the two label-free signals introduced in
+Section~\ref{intro}. Throughout, $\theta$ denotes the adapted parameters
+(the visual-encoder LayerNorm affine parameters, following prior OVSS
+adaptation work), and $p_\theta(\cdot \mid x) \in \Delta^{C-1}$ the predicted
+class distribution for input $x$ over the $C$ classes present in the current
+vocabulary, obtained by a softmax over visual--text compatibility scores.
+Most CTTA objectives, including the OVSS baselines we compare against, adapt
+$\theta$ by minimizing the expected prediction entropy
+$L(\theta) = \mathbb{E}_x\big[H(p_\theta(\cdot\mid x))\big]$, where
+$H(q) = -\sum_i q_i \log q_i$. Given a window of $N$ consecutive unlabeled
+predictions during adaptation, we write their average as the
+\emph{class-marginal distribution}
+$\bar y = \frac1N\sum_{n=1}^N p_\theta(\cdot \mid x_n)$, with class-marginal
+entropy $H(\bar y)$.
+
+\subsection{Why does collapse happen?} \label{sec:why-collapse}
+
+Entropy minimization rewards confident predictions but places no explicit
+constraint on \emph{which} class that confidence falls on. Treating the
+sample index as a random variable, the class-marginal entropy and the
+per-sample conditional entropy decompose the mutual information between
+inputs and predictions:
+\begin{equation}
+I(x; c) \;=\; H(\bar y) \;-\; \mathbb{E}_x\big[H(p_\theta(\cdot\mid x))\big].
+\label{eq:mi-decomp}
+\end{equation}
+The adaptation objective $L(\theta)$ minimizes only the second term. Nothing
+in $L(\theta)$ penalizes $H(\bar y) \to 0$: a model that maps \emph{every}
+input to the same class $k$ attains $L(\theta) = 0$, the global minimum of the
+objective, together with $H(\bar y) = 0$. In other words, the single-class
+collapse pattern we observe empirically is not a failure of optimization --
+it is the objective's own optimum.
+
+A natural response, and one taken by prior OVSS work, is to add a
+marginal-diversity term that explicitly rewards $H(\bar y)$, e.g.\ the
+regularized objective used by DAF~\citep{doloriel2026daf},
+$L_\lambda(\theta) = \mathbb{E}_x[H(p_\theta(\cdot\mid x))] - \lambda H(\bar
+y_\theta)$. We show that this fix is structurally limited:
+
+\begin{quote}
+\textbf{Proposition 1.} \textit{Let $\{\theta^{(s)}\}$ be a sequence of
+parameters along which predictions saturate toward a single class, i.e.\
+$p_{\theta^{(s)}}(\cdot\mid x) \to e_k$ for (almost) every $x$ and a common
+$k$. Then $\nabla_\theta L_\lambda(\theta^{(s)}) \to 0$ for every finite
+$\lambda \in \mathbb{R}$.}
+\end{quote}
+
+\emph{Proof sketch.} Differentiating $H(p)$ with respect to the logits $z$
+gives the closed form $\partial H(p)/\partial z_j = -p_j(\log p_j + H(p))$,
+and an analogous expression for $\partial H(\bar y)/\partial z_j$ scaled by
+$1/N$ (full derivation in Appendix~\ref{app:proofs}). Both expressions carry
+an explicit factor of $p_j$ (or the corresponding per-sample probability),
+which vanishes as the prediction saturates. The conditional-entropy term and
+the diversity term therefore vanish \emph{at the same rate}, so their
+weighted sum vanishes regardless of $\lambda$. $\blacksquare$
+
+The mechanism is softmax saturation: once a prediction is sufficiently
+confident, the model becomes locally insensitive to further changes in its
+own output, and this insensitivity multiplies through every term built from
+$H(p)$ or $H(\bar y)$. Consequently, a diversity term can slow the approach
+to the degenerate solution -- and we confirm this empirically, where adding
+such a term delays but does not prevent eventual collapse under our extended
+horizon -- but it cannot alter the destination, because the degenerate
+solution remains a critical point of the regularized objective for any
+regularization strength. This gives a principled reason, rather than only an
+empirical one, for why our method intervenes by \emph{restoring} parameters
+rather than by adding another gradient-based term to the loss.
+
+This collapse mechanism is a property of entropy minimization itself and does
+not depend on the openness or size of the class vocabulary: it threatens any
+method that adapts by minimizing prediction entropy, open-vocabulary or
+closed-set alike, and is consistent with instability reported for
+closed-set entropy-based TTA~\citep{niu2023sar}. It is, however, a different
+mechanism from the one recently identified for long-horizon closed-set
+classification by MGP~\citep{xiong2026mgp}, who attribute collapse to
+spurious gradient components leaking into a protected parameter subspace and
+correct it by projecting the entropy gradient's direction within that
+subspace. Because this correction acts purely on the direction of the
+gradient and not on the marginal distribution of predictions, it does not
+address the class-marginal degeneracy described above -- consistent with our
+observation that MGP itself becomes unstable under our long-horizon OVSS
+setting (Section~\ref{sec:results}).
+
+\subsection{Signal: gradient norm} \label{sec:signal-gradnorm}
+
+The proof of Proposition~1 gives gradient norm a concrete interpretation.
+Because $\partial H(p)/\partial z_j = -p_j(\log p_j + H(p))$ vanishes whenever
+a prediction is confident, the norm of the adaptation gradient is small both
+when the model has settled into a well-calibrated, confidently correct state
+\emph{and} when it has collapsed onto a degenerate, confidently wrong one --
+both are low-entropy, low-gradient configurations. Gradient norm at
+convergence is therefore ambiguous between these two outcomes and cannot,
+by itself, certify that a low-gradient state is a safe one to consider
+reliable.
+
+Away from either endpoint, however, gradient norm behaves informatively. As
+the model transitions out of a stable configuration -- its predictions no
+longer matching the confident, calibrated state that produced low gradients,
+but not yet saturated onto a degenerate class either -- the entropy loss
+surface is locally steeper, and the resulting gradient magnitude increases.
+This transitional rise, consistent with gradient behavior reported during
+the onset of instability in entropy-based TTA~\citep{niu2023sar}, is what
+makes gradient norm useful as an \emph{early} indicator: it grows while the
+model is drifting away from a reliable state, before predictions have fully
+saturated onto a single class and the gradient vanishes again by
+Proposition~1. Figure~\ref{fig:gradnorm} shows this pattern against mIoU
+across our benchmarks: gradient norm rises as accuracy begins to degrade, and
+only collapses toward zero once degradation is already severe -- i.e., it
+reliably signals instability while there is still adaptation quality worth
+protecting, but its magnitude alone cannot distinguish an already-collapsed
+state from a genuinely healthy one. This motivates pairing it with a signal
+that can make that distinction: class-marginal entropy.
+
+\subsection{Signal: class-marginal entropy} \label{sec:signal-hmargin}
+
+Class-marginal entropy directly targets the term that the adaptation
+objective ignores (Equation~\ref{eq:mi-decomp}). Writing $u$ for the uniform
+distribution over the $C$ classes,
+\begin{equation}
+H(\bar y) \;=\; \log C \;-\; D_{\mathrm{KL}}(\bar y \,\|\, u),
+\label{eq:hmargin-kl}
+\end{equation}
+an exact identity (expand the KL definition and use $\sum_i \bar y_i = 1$).
+Equation~\ref{eq:hmargin-kl} gives $H(\bar y)$ a direct information-geometric
+reading: monitoring class-marginal entropy is equivalent, up to the constant
+$\log C$, to monitoring how far the aggregated predictions have drifted from
+uniform use of the vocabulary. Equivalently, writing the \emph{effective
+number of classes in use} as $C_{\mathrm{eff}} = \exp(H(\bar y))$, a drop in
+$H(\bar y)$ corresponds to a multiplicative shrinkage of $C_{\mathrm{eff}}$
+toward $1$ -- a direct formalization of "probability mass becoming
+concentrated on a small subset of categories."
+
+A natural first bound, $H(\bar y) \ge -\log(\max_i \bar y_i)$, is tight but
+uninformative at realistic operating points: on our benchmarks, marginal
+entropy near the onset of collapse is still far from its degenerate limit,
+and this bound only certifies that \emph{some} class holds a small fraction
+of the mass -- true of many healthy distributions as well. A quantitatively
+useful guarantee instead follows from bounding the KL divergence in
+Equation~\ref{eq:hmargin-kl} by a $\chi^2$-divergence and relating it to total
+variation distance (Appendix~\ref{app:proofs}):
+\begin{equation}
+\big\| \bar y - u \big\|_{\mathrm{TV}} \;\ge\; \frac12\sqrt{\frac{\log C -
+H(\bar y)}{C}}.
+\label{eq:tv-bound}
+\end{equation}
+Equation~\ref{eq:tv-bound} says that once $H(\bar y)$ has dropped by a given
+amount from its running maximum, the marginal prediction distribution is
+\emph{guaranteed} to have moved at least a corresponding, quantifiable
+fraction of its probability mass away from a healthy, diverse baseline. This
+is what licenses treating a relative drop in $H(\bar y)$, rather than its
+absolute value, as a collapse trigger: the guarantee holds regardless of
+$C$, so the same relative threshold is meaningful across datasets and
+vocabularies of very different size (see Section~\ref{sec:results} for the
+transfer of a single threshold across all three benchmarks).
+
+Class-marginal entropy has a blind spot that mirrors gradient norm's: because
+it is a \emph{marginal}, aggregate statistic, it stays high whenever
+predictions are heterogeneous across the aggregation window, even if
+individual predictions are already degrading in quality -- so long as the
+errors are spread across, rather than concentrated onto, a common class. On
+benchmarks where degradation manifests this way, $H(\bar y)$ can remain near
+its healthy value while accuracy declines, giving no warning on its own.
+This is precisely the failure mode that gradient norm, tracking the
+optimization dynamics rather than the prediction distribution, remains
+sensitive to. The two signals are therefore complementary rather than
+redundant: gradient norm can catch degradation that does not concentrate
+onto a single class, and class-marginal entropy can distinguish a
+low-gradient collapsed state from a low-gradient healthy one -- the
+ambiguity left open at the end of Section~\ref{sec:signal-gradnorm}. Section
+\ref{sec:method} builds our restoration mechanism, CAGA, jointly on both.

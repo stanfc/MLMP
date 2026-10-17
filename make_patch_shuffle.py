@@ -5,7 +5,7 @@ split into ps x ps = 4x4 = 16 blocks and randomly permute them.
 import numpy as np
 from PIL import Image
 
-SRC = ".data/ACDC/rgb_anon/night/test/GP010364/GP010364_frame_000047_rgb_anon.png"
+SRC = ".data/ACDC/rgb_anon/snow/val/GOPR0122/GOPR0122_frame_000001_rgb_anon.png"
 PS = 4          # patch_len (4x4 = 16 blocks), same as the method default
 SEED = 0
 
@@ -28,8 +28,8 @@ blocks = blocks[perm]
 # reassemble
 out = blocks.reshape(PS, PS, h, w, 3).transpose(0, 2, 1, 3, 4).reshape(H2, W2, 3)
 
-Image.fromarray(out).save("figures/patch_shuffle_night.png")
-img.crop((0, 0, W2, H2)).save("figures/patch_shuffle_night_orig.png")
-print("saved -> figures/patch_shuffle_night.png (shuffled)")
-print("saved -> figures/patch_shuffle_night_orig.png (original, same crop)")
+Image.fromarray(out).save("figures/patch_shuffle_snow.png")
+img.crop((0, 0, W2, H2)).save("figures/patch_shuffle_snow_orig.png")
+print("saved -> figures/patch_shuffle_snow.png (shuffled)")
+print("saved -> figures/patch_shuffle_snow_orig.png (original, same crop)")
 print(f"grid: {PS}x{PS} = {PS*PS} blocks, block size {h}x{w}, perm={perm.tolist()}")

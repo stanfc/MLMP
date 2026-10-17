@@ -19,9 +19,11 @@ class MLMP:
     multiple prompt and multiple level optimization. 
     """
 
-    def __init__(self, ovss_type, ovss_backbone, lr, classes, vision_outputs=(-1,), 
-                 alpha_cls=0.0, steps=10, prompt_dir='prompts.yaml', 
+    def __init__(self, ovss_type, ovss_backbone, lr, classes, vision_outputs=(-1,),
+                 alpha_cls=0.0, steps=10, prompt_dir='prompts.yaml',
                  prompt_integration='loss', runtime_calculation=False,
+                 catseg_checkpoint=None,
+                 maft_checkpoint=None,
                  device='cpu',
                  ):
         """
@@ -60,7 +62,9 @@ class MLMP:
 
 
         # Load the OVSS model and tokenizer
-        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device)
+        self.model, self.tokenize = load_ovss(self.ovss_type, self.ovss_backbone, device=self.device,
+                                              classes=self.classes, catseg_checkpoint=catseg_checkpoint,
+                                              maft_checkpoint=maft_checkpoint)
 
         if self.prompt_dir:
             # Load the prompt templates
